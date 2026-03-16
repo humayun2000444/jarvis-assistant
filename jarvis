@@ -1,0 +1,4 @@
+#!/bin/bash
+SCRIPT_DIR="/home/prototype/jarvis"
+source "$SCRIPT_DIR/venv/bin/activate"
+python "$SCRIPT_DIR/jarvis.py" "$@"

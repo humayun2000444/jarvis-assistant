@@ -34,6 +34,13 @@ from core.features import (
     voice_engine, daily_motivation, screen_time
 )
 
+# Voice Assistant for conversation
+try:
+    from core.voice_assistant import VoiceAssistant
+    VOICE_ASSISTANT_AVAILABLE = True
+except ImportError:
+    VOICE_ASSISTANT_AVAILABLE = False
+
 
 # Iron Man Color Scheme
 COLORS = {
@@ -620,6 +627,37 @@ class AIWorker(QThread):
         self.finished.emit()
 
 
+class VoiceListenerThread(QThread):
+    """Thread for voice listening"""
+    text_recognized = pyqtSignal(str)
+    listening_started = pyqtSignal()
+    listening_stopped = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.voice_assistant = None
+        if VOICE_ASSISTANT_AVAILABLE:
+            self.voice_assistant = VoiceAssistant()
+
+    def run(self):
+        if not self.voice_assistant:
+            self.error.emit("Voice assistant not available")
+            return
+
+        self.listening_started.emit()
+        try:
+            text = self.voice_assistant.listen_once(timeout=10.0, phrase_time_limit=15.0)
+            if text:
+                self.text_recognized.emit(text)
+            else:
+                self.error.emit("Didn't catch that")
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            self.listening_stopped.emit()
+
+
 class CommandPalette(QDialog):
     """Quick command palette (Ctrl+K)"""
 
@@ -1161,12 +1199,31 @@ class JarvisMainWindow(QMainWindow):
         input_layout = QHBoxLayout(input_frame)
         input_layout.setContentsMargins(10, 10, 10, 10)
 
-        voice_indicator = QLabel("🎤")
-        voice_indicator.setStyleSheet(f"color: {COLORS['arc_blue']}; font-size: 20px;")
-        input_layout.addWidget(voice_indicator)
+        # Voice input button (clickable microphone)
+        self.mic_btn = QPushButton("🎤")
+        self.mic_btn.setFixedSize(40, 40)
+        self.mic_btn.setToolTip("Click to speak (or hold Spacebar)")
+        self.mic_btn.clicked.connect(self.start_voice_listening)
+        self.mic_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {COLORS['bg_panel']};
+                color: {COLORS['arc_blue']};
+                border: 2px solid {COLORS['arc_blue_dim']};
+                border-radius: 20px;
+                font-size: 20px;
+            }}
+            QPushButton:hover {{
+                background: {COLORS['arc_blue_dim']};
+                color: white;
+            }}
+            QPushButton:pressed {{
+                background: {COLORS['arc_blue']};
+            }}
+        """)
+        input_layout.addWidget(self.mic_btn)
 
         self.chat_input = QLineEdit()
-        self.chat_input.setPlaceholderText("ENTER COMMAND OR QUERY...")
+        self.chat_input.setPlaceholderText("ENTER COMMAND OR QUERY... (or click 🎤 to speak)")
         self.chat_input.returnPressed.connect(self.send_message)
         self.chat_input.setStyleSheet(f"""
             QLineEdit {{
@@ -1183,6 +1240,10 @@ class JarvisMainWindow(QMainWindow):
         send_btn = HUDButton("TRANSMIT")
         send_btn.clicked.connect(self.send_message)
         input_layout.addWidget(send_btn)
+
+        # Voice listener thread
+        self.voice_listener = None
+        self.is_listening = False
 
         layout.addWidget(input_frame)
 
@@ -1430,6 +1491,69 @@ class JarvisMainWindow(QMainWindow):
         self.voice_enabled = voice_engine.toggle()
         icon = "🔊" if self.voice_enabled else "🔇"
         self.voice_btn.setText(icon)
+
+    def start_voice_listening(self):
+        """Start listening for voice input"""
+        if self.is_listening:
+            return
+
+        if not VOICE_ASSISTANT_AVAILABLE:
+            self.add_message("SYSTEM", "Voice input not available. Install: pip install SpeechRecognition")
+            return
+
+        self.is_listening = True
+        self.mic_btn.setText("🔴")
+        self.mic_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {COLORS['red']};
+                color: white;
+                border: 2px solid {COLORS['red']};
+                border-radius: 20px;
+                font-size: 20px;
+            }}
+        """)
+        self.chat_input.setPlaceholderText("🎤 LISTENING... Speak now!")
+
+        # Start voice listener thread
+        self.voice_listener = VoiceListenerThread()
+        self.voice_listener.text_recognized.connect(self.on_voice_recognized)
+        self.voice_listener.listening_stopped.connect(self.on_voice_stopped)
+        self.voice_listener.error.connect(self.on_voice_error)
+        self.voice_listener.start()
+
+        # Start waveform animation
+        self.waveform.start()
+
+    def on_voice_recognized(self, text: str):
+        """Handle recognized speech"""
+        self.chat_input.setText(text)
+        self.add_message("VOICE", text)
+        # Auto-send the message
+        QTimer.singleShot(500, self.send_message)
+
+    def on_voice_stopped(self):
+        """Reset voice UI after listening stops"""
+        self.is_listening = False
+        self.mic_btn.setText("🎤")
+        self.mic_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {COLORS['bg_panel']};
+                color: {COLORS['arc_blue']};
+                border: 2px solid {COLORS['arc_blue_dim']};
+                border-radius: 20px;
+                font-size: 20px;
+            }}
+            QPushButton:hover {{
+                background: {COLORS['arc_blue_dim']};
+                color: white;
+            }}
+        """)
+        self.chat_input.setPlaceholderText("ENTER COMMAND OR QUERY... (or click 🎤 to speak)")
+        self.waveform.stop()
+
+    def on_voice_error(self, error: str):
+        """Handle voice recognition error"""
+        self.add_message("SYSTEM", f"Voice: {error}")
 
     def speak_last_message(self):
         """Speak the last AI message"""

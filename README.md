@@ -10,6 +10,7 @@ A robust, Iron Man-inspired personal AI assistant with both GUI and CLI interfac
 - **Pattern Learning** - Learns from your daily routine and provides suggestions
 - **Voice Conversation** - Talk to JARVIS naturally with human-like responses
 - **Voice Output** - Neural text-to-speech with natural voices
+- **Weather Updates** - Real-time weather information for any location
 - **Desktop Notifications** - System notifications for reminders
 - **Pomodoro Timer** - Built-in focus timer with breaks
 - **Health Reminders** - Water, posture, eye strain, and stretch reminders
@@ -101,6 +102,11 @@ jarvis --setup       # Run initial setup
 /summary            # Generate daily summary
 /stats              # Show productivity stats
 /suggest            # Get behavior suggestions
+
+# Weather
+"what's the weather"     # Current weather (auto-detect location)
+"weather in London"      # Weather for specific city
+"tell me the forecast"   # 3-day forecast
 
 # Other
 /help               # Show all commands

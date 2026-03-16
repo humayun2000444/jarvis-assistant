@@ -22,6 +22,13 @@ from core.features import VoiceEngine
 from core.ai_engine import get_ai
 from core.logger import get_logger
 
+# Weather service
+try:
+    from core.weather import get_weather_speech
+    WEATHER_AVAILABLE = True
+except ImportError:
+    WEATHER_AVAILABLE = False
+
 logger = get_logger("voice_assistant")
 
 
@@ -269,9 +276,19 @@ class VoiceAssistant:
 class VoiceCommandHandler:
     """Handle voice commands for quick actions"""
 
+    @staticmethod
+    def _get_weather():
+        """Get weather for speech"""
+        if WEATHER_AVAILABLE:
+            return get_weather_speech()
+        return "Weather service is not available."
+
     COMMANDS = {
         'what time is it': lambda: f"The time is {time.strftime('%I:%M %p')}",
         'what is the date': lambda: f"Today is {time.strftime('%A, %B %d, %Y')}",
+        'what is the weather': lambda: VoiceCommandHandler._get_weather(),
+        "what's the weather": lambda: VoiceCommandHandler._get_weather(),
+        'weather today': lambda: VoiceCommandHandler._get_weather(),
         'open tasks': 'show_tasks',
         'show my tasks': 'show_tasks',
         'add task': 'add_task',

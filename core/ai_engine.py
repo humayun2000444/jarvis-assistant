@@ -24,6 +24,13 @@ from config.settings import AI_MODEL, AI_TEMPERATURE, PERSONALITY_PROMPT, USER_N
 from core.database import get_db
 from core.logger import get_logger, log_exceptions, ExceptionHandler
 
+# Import weather service
+try:
+    from core.weather import get_weather_service, get_weather_speech
+    WEATHER_AVAILABLE = True
+except ImportError:
+    WEATHER_AVAILABLE = False
+
 logger = get_logger("ai_engine")
 
 
@@ -432,6 +439,10 @@ Remember to:
                 greeting = "Good evening"
             return f"{greeting}, {USER_NAME}! I'm {ASSISTANT_NAME}, your personal assistant. How can I help you today?"
 
+        # Weather queries (check early before "today" triggers activity check)
+        if any(word in message_lower for word in ['weather', 'temperature', 'forecast', 'rain', 'sunny', 'cloudy']):
+            return self._get_weather_response(message_lower)
+
         # Task queries
         if any(word in message_lower for word in ['task', 'todo', 'pending', 'what do i need']):
             tasks = self.db.get_pending_tasks()
@@ -470,17 +481,20 @@ Remember to:
 
         # Help
         if any(word in message_lower for word in ['help', 'what can you do', 'capabilities']):
+            weather_status = "Available" if WEATHER_AVAILABLE else "Not installed"
             return f"""I'm {ASSISTANT_NAME}, your personal assistant. I can help you with:
 
 - Task Management: "Add task...", "Show tasks", "Complete task #..."
 - Activity Logging: "Log activity...", "What did I do today?"
 - Daily Summaries: "Show summary", "How was my day?"
 - Productivity Stats: "Show stats", "How productive am I?"
+- Weather: "What's the weather?", "Weather in London"
 - Reminders: "Remind me to..."
 - Suggestions: "Give me suggestions"
 
 Note: For full AI capabilities, Ollama should be running.
-Current status: {'Ready' if self.ollama_available else 'Offline (using basic responses)'}"""
+AI status: {'Ready' if self.ollama_available else 'Offline (using basic responses)'}
+Weather: {weather_status}"""
 
         # Time
         if any(word in message_lower for word in ['time', 'what time', 'current time']):
@@ -529,7 +543,46 @@ Current status: {'Ready' if self.ollama_available else 'Offline (using basic res
             return "reporting"
         elif any(word in message_lower for word in ['help', 'how', 'what']):
             return "help_query"
+        elif any(word in message_lower for word in ['weather', 'temperature', 'forecast']):
+            return "weather_query"
         return "general"
+
+    def _get_weather_response(self, message: str) -> str:
+        """Get weather information for user query"""
+        if not WEATHER_AVAILABLE:
+            return "Weather service is not available. Please install the requests library: pip install requests"
+
+        try:
+            # Extract location from message
+            location = self._extract_location(message)
+            weather_service = get_weather_service()
+
+            # Get weather data
+            return weather_service.get_weather_summary(location)
+
+        except Exception as e:
+            logger.error(f"Weather service error: {e}")
+            return f"I couldn't fetch the weather information: {str(e)}"
+
+    def _extract_location(self, message: str) -> str:
+        """Extract location from user message"""
+        # Common patterns for location extraction
+        location_keywords = ['in', 'for', 'at', 'weather']
+        words = message.lower().split()
+
+        # Try to find location after keywords
+        for i, word in enumerate(words):
+            if word in location_keywords and i + 1 < len(words):
+                # Get remaining words as potential location
+                potential_location = ' '.join(words[i + 1:])
+                # Clean up common words
+                for remove in ['today', 'tomorrow', 'now', 'please', '?', 'the']:
+                    potential_location = potential_location.replace(remove, '').strip()
+                if potential_location:
+                    return potential_location
+
+        # Default to auto-detection
+        return "auto"
 
     def generate_welcome_message(self) -> str:
         """Generate personalized welcome message"""

@@ -88,54 +88,202 @@ class SystemMonitor:
 
 
 class VoiceEngine:
-    """Text-to-speech engine for JARVIS voice"""
+    """Human-like text-to-speech engine using Edge TTS neural voices"""
+
+    # Natural-sounding voice options (Microsoft Neural Voices)
+    VOICES = {
+        'jarvis': 'en-GB-RyanNeural',        # British male - JARVIS style
+        'jarvis_us': 'en-US-GuyNeural',      # American male
+        'female': 'en-US-JennyNeural',        # American female
+        'british_female': 'en-GB-SoniaNeural', # British female
+    }
 
     def __init__(self):
-        self.engine = None
         self.enabled = True
         self.speaking = False
+        self.voice = self.VOICES['jarvis']  # Default JARVIS voice
+        self.rate = "+0%"  # Speech rate adjustment
+        self.pitch = "+0Hz"  # Pitch adjustment
+        self._process = None
+        self._temp_file = "/tmp/jarvis_speech.mp3"
 
-        if TTS_AVAILABLE:
+        # Check if edge-tts is available
+        try:
+            import edge_tts
+            self.edge_tts_available = True
+        except ImportError:
+            self.edge_tts_available = False
+
+        # Fallback to pyttsx3 if edge-tts not available
+        self.pyttsx_engine = None
+        if not self.edge_tts_available and TTS_AVAILABLE:
             try:
-                self.engine = pyttsx3.init()
-                # Configure voice
-                voices = self.engine.getProperty('voices')
-                # Try to find a male voice for JARVIS
+                self.pyttsx_engine = pyttsx3.init()
+                voices = self.pyttsx_engine.getProperty('voices')
                 for voice in voices:
-                    if 'male' in voice.name.lower() or 'david' in voice.name.lower():
-                        self.engine.setProperty('voice', voice.id)
+                    if 'male' in voice.name.lower():
+                        self.pyttsx_engine.setProperty('voice', voice.id)
                         break
-                self.engine.setProperty('rate', 175)  # Speed
-                self.engine.setProperty('volume', 0.9)
+                self.pyttsx_engine.setProperty('rate', 175)
             except Exception:
-                self.engine = None
+                pass
+
+    def set_voice(self, voice_name: str):
+        """Set the voice to use"""
+        if voice_name in self.VOICES:
+            self.voice = self.VOICES[voice_name]
+        elif voice_name.startswith('en-'):
+            self.voice = voice_name
+
+    def set_rate(self, rate: int):
+        """Set speech rate (-50 to +50 percent)"""
+        rate = max(-50, min(50, rate))
+        self.rate = f"{'+' if rate >= 0 else ''}{rate}%"
+
+    def set_pitch(self, pitch: int):
+        """Set pitch adjustment in Hz (-50 to +50)"""
+        pitch = max(-50, min(50, pitch))
+        self.pitch = f"{'+' if pitch >= 0 else ''}{pitch}Hz"
 
     def speak(self, text: str, block: bool = False):
-        """Speak text"""
-        if not self.enabled or not self.engine:
+        """Speak text with human-like voice"""
+        if not self.enabled:
             return
 
-        def _speak():
+        def _speak_edge():
             self.speaking = True
             try:
-                self.engine.say(text)
-                self.engine.runAndWait()
+                import edge_tts
+                import asyncio
+
+                async def generate_and_play():
+                    communicate = edge_tts.Communicate(
+                        text,
+                        self.voice,
+                        rate=self.rate,
+                        pitch=self.pitch
+                    )
+                    await communicate.save(self._temp_file)
+
+                    # Play using available audio player
+                    players = ['mpv', 'ffplay', 'aplay', 'paplay']
+                    for player in players:
+                        try:
+                            if player == 'mpv':
+                                cmd = ['mpv', '--no-video', '--really-quiet', self._temp_file]
+                            elif player == 'ffplay':
+                                cmd = ['ffplay', '-nodisp', '-autoexit', '-loglevel', 'quiet', self._temp_file]
+                            else:
+                                cmd = [player, self._temp_file]
+
+                            self._process = subprocess.Popen(
+                                cmd,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL
+                            )
+                            self._process.wait()
+                            break
+                        except FileNotFoundError:
+                            continue
+
+                # Run async function
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(generate_and_play())
+                finally:
+                    loop.close()
+
+            except Exception as e:
+                print(f"Voice error: {e}")
+            finally:
+                self.speaking = False
+                # Cleanup temp file
+                try:
+                    import os
+                    if os.path.exists(self._temp_file):
+                        os.remove(self._temp_file)
+                except:
+                    pass
+
+        def _speak_pyttsx():
+            self.speaking = True
+            try:
+                self.pyttsx_engine.say(text)
+                self.pyttsx_engine.runAndWait()
             except:
                 pass
             self.speaking = False
 
-        if block:
-            _speak()
+        # Choose speech method
+        if self.edge_tts_available:
+            speak_func = _speak_edge
+        elif self.pyttsx_engine:
+            speak_func = _speak_pyttsx
         else:
-            thread = threading.Thread(target=_speak)
+            return
+
+        if block:
+            speak_func()
+        else:
+            thread = threading.Thread(target=speak_func)
+            thread.daemon = True
+            thread.start()
+
+    def speak_ssml(self, ssml_text: str, block: bool = False):
+        """Speak using SSML for advanced control (pauses, emphasis, etc.)"""
+        if not self.enabled or not self.edge_tts_available:
+            # Fallback to regular speak
+            import re
+            plain_text = re.sub('<[^>]+>', '', ssml_text)
+            self.speak(plain_text, block)
+            return
+
+        def _speak_ssml():
+            self.speaking = True
+            try:
+                import edge_tts
+                import asyncio
+
+                async def generate_and_play():
+                    communicate = edge_tts.Communicate(ssml_text, self.voice)
+                    await communicate.save(self._temp_file)
+
+                    subprocess.run(
+                        ['mpv', '--no-video', '--really-quiet', self._temp_file],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(generate_and_play())
+                finally:
+                    loop.close()
+
+            except Exception:
+                pass
+            finally:
+                self.speaking = False
+
+        if block:
+            _speak_ssml()
+        else:
+            thread = threading.Thread(target=_speak_ssml)
             thread.daemon = True
             thread.start()
 
     def stop(self):
         """Stop speaking"""
-        if self.engine:
+        if self._process:
             try:
-                self.engine.stop()
+                self._process.terminate()
+            except:
+                pass
+        if self.pyttsx_engine:
+            try:
+                self.pyttsx_engine.stop()
             except:
                 pass
         self.speaking = False
@@ -144,6 +292,14 @@ class VoiceEngine:
         """Toggle voice on/off"""
         self.enabled = not self.enabled
         return self.enabled
+
+    def get_available_voices(self) -> dict:
+        """Get available voice options"""
+        return self.VOICES.copy()
+
+    def test_voice(self):
+        """Test the current voice"""
+        self.speak("Hello, I am JARVIS, your personal AI assistant. How may I help you today?", block=True)
 
 
 class PomodoroTimer:

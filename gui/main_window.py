@@ -1553,7 +1553,14 @@ class JarvisMainWindow(QMainWindow):
 
     def on_voice_error(self, error: str):
         """Handle voice recognition error"""
-        self.append_message("SYSTEM", f"Voice: {error}")
+        # Don't spam chat with "Didn't catch that" - just show briefly in placeholder
+        if "catch" in error.lower():
+            self.chat_input.setPlaceholderText("Didn't catch that. Click 🎤 to try again.")
+            QTimer.singleShot(3000, lambda: self.chat_input.setPlaceholderText(
+                "ENTER COMMAND OR QUERY... (or click 🎤 to speak)"))
+        else:
+            # Show actual errors in chat
+            self.append_message("SYSTEM", f"Voice: {error}")
 
     def speak_last_message(self):
         """Speak the last AI message"""

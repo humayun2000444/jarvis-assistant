@@ -273,6 +273,19 @@ Remember to:
         """Generate cache key for message"""
         return hash(message)
 
+    def _handle_direct_queries(self, message: str) -> Optional[str]:
+        """Handle queries that should be answered directly without AI"""
+        # Weather queries - always handle directly for real-time data
+        if any(word in message for word in ['weather', 'temperature', 'forecast']):
+            return self._get_weather_response(message)
+
+        # Time queries
+        if any(phrase in message for phrase in ['what time', 'current time', "what's the time"]):
+            return f"The current time is {datetime.now().strftime('%H:%M on %A, %B %d, %Y')}"
+
+        # Return None to let Ollama handle other queries
+        return None
+
     @log_exceptions("ai_engine")
     def chat(self, message: str, stream: bool = False, use_cache: bool = True) -> str:
         """Send a message to the AI and get response"""
@@ -293,22 +306,26 @@ Remember to:
         except Exception as e:
             logger.warning(f"Failed to save user message: {e}")
 
-        # Get recent conversation history
-        try:
-            recent = self.db.get_recent_messages(10)
-            messages = [{"role": m["role"], "content": m["content"]} for m in recent]
-        except Exception as e:
-            logger.warning(f"Failed to get recent messages: {e}")
-            messages = []
+        # Handle special queries directly (weather, time, etc.) - don't send to Ollama
+        message_lower = message.lower().strip()
+        reply = self._handle_direct_queries(message_lower)
 
-        # Try Ollama first
-        reply = None
-        if self.ensure_ollama_ready():
-            reply = self._chat_with_ollama(message, messages)
-
-        # Fallback to rule-based if Ollama unavailable
         if reply is None:
-            reply = self._fallback_response(message)
+            # Get recent conversation history
+            try:
+                recent = self.db.get_recent_messages(10)
+                messages = [{"role": m["role"], "content": m["content"]} for m in recent]
+            except Exception as e:
+                logger.warning(f"Failed to get recent messages: {e}")
+                messages = []
+
+            # Try Ollama first
+            if self.ensure_ollama_ready():
+                reply = self._chat_with_ollama(message, messages)
+
+            # Fallback to rule-based if Ollama unavailable
+            if reply is None:
+                reply = self._fallback_response(message)
 
         # Save response
         try:

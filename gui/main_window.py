@@ -1498,7 +1498,7 @@ class JarvisMainWindow(QMainWindow):
             return
 
         if not VOICE_ASSISTANT_AVAILABLE:
-            self.add_message("SYSTEM", "Voice input not available. Install: pip install SpeechRecognition")
+            self.append_message("SYSTEM", "Voice input not available. Install: pip install SpeechRecognition")
             return
 
         self.is_listening = True
@@ -1527,7 +1527,7 @@ class JarvisMainWindow(QMainWindow):
     def on_voice_recognized(self, text: str):
         """Handle recognized speech"""
         self.chat_input.setText(text)
-        self.add_message("VOICE", text)
+        self.append_message("VOICE", text)
         # Auto-send the message
         QTimer.singleShot(500, self.send_message)
 
@@ -1553,7 +1553,7 @@ class JarvisMainWindow(QMainWindow):
 
     def on_voice_error(self, error: str):
         """Handle voice recognition error"""
-        self.add_message("SYSTEM", f"Voice: {error}")
+        self.append_message("SYSTEM", f"Voice: {error}")
 
     def speak_last_message(self):
         """Speak the last AI message"""

@@ -8,7 +8,8 @@ A robust, Iron Man-inspired personal AI assistant with both GUI and CLI interfac
 - **Activity Logging** - Log daily work activities with duration tracking
 - **Daily Summaries** - Automatic end-of-day productivity summaries
 - **Pattern Learning** - Learns from your daily routine and provides suggestions
-- **Voice Output** - Text-to-speech notifications (optional)
+- **Voice Conversation** - Talk to JARVIS naturally with human-like responses
+- **Voice Output** - Neural text-to-speech with natural voices
 - **Desktop Notifications** - System notifications for reminders
 - **Pomodoro Timer** - Built-in focus timer with breaks
 - **Health Reminders** - Water, posture, eye strain, and stretch reminders
@@ -68,6 +69,12 @@ jarvis
 ### Background Daemon
 ```bash
 jarvis --daemon
+```
+
+### Voice Mode (Interactive Conversation)
+```bash
+jarvis --voice       # Start continuous voice conversation
+jarvis --talk        # Quick voice interaction (speak once)
 ```
 
 ### Quick Commands

@@ -84,6 +84,10 @@ Examples:
                         help='Show version information')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug mode')
+    parser.add_argument('--voice', action='store_true',
+                        help='Start interactive voice conversation mode')
+    parser.add_argument('--talk', action='store_true',
+                        help='Quick voice interaction (listen and respond once)')
 
     # Parse known args to allow CLI subcommands
     args, remaining = parser.parse_known_args()
@@ -106,6 +110,10 @@ Examples:
             run_diagnostics()
         elif args.repair:
             run_repair(args.repair)
+        elif args.voice:
+            run_voice_mode()
+        elif args.talk:
+            quick_talk()
         elif args.gui:
             run_gui()
         elif args.daemon:
@@ -245,6 +253,50 @@ def run_setup():
     print("\n" + "=" * 50)
     print("Setup complete! Run 'jarvis' to start.")
     print("=" * 50)
+
+
+def run_voice_mode():
+    """Start interactive voice conversation mode"""
+    try:
+        from core.voice_assistant import start_voice_mode
+        print("Starting JARVIS Voice Mode...")
+        print("Speak naturally - JARVIS will listen and respond.")
+        print("Say 'goodbye' to exit.\n")
+        start_voice_mode()
+    except ImportError as e:
+        print(f"Error: Voice dependencies not installed: {e}")
+        print("Install with: pip install SpeechRecognition edge-tts")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Voice mode error: {e}")
+        sys.exit(1)
+
+
+def quick_talk():
+    """Quick voice interaction - listen once and respond"""
+    try:
+        from core.voice_assistant import get_voice_assistant
+
+        assistant = get_voice_assistant()
+
+        print("JARVIS is listening... (speak now)")
+        text = assistant.listen_once(timeout=10.0)
+
+        if text:
+            print(f"You said: {text}")
+            print("\nJARVIS is responding...")
+            response = assistant.respond_to(text)
+            print(f"\nJARVIS: {response}")
+        else:
+            print("Didn't catch that. Try again with: jarvis --talk")
+
+    except ImportError as e:
+        print(f"Error: Voice dependencies not installed: {e}")
+        print("Install with: pip install SpeechRecognition edge-tts")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Voice error: {e}")
+        sys.exit(1)
 
 
 def run_gui():

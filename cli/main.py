@@ -106,6 +106,28 @@ def handle_command(cmd: str):
         show_stats()
     elif command == 'weather':
         show_weather(args)
+    elif command == 'search':
+        cli_search(args)
+    elif command == 'note':
+        cli_note(args)
+    elif command == 'notes':
+        cli_notes()
+    elif command == 'remind':
+        cli_remind(args)
+    elif command == 'reminders':
+        cli_reminders()
+    elif command == 'system':
+        cli_system()
+    elif command == 'briefing':
+        cli_briefing()
+    elif command == 'remember':
+        cli_remember(args)
+    elif command == 'recall':
+        cli_recall(args)
+    elif command == 'workflows':
+        cli_workflows()
+    elif command == 'music':
+        cli_music(args)
     else:
         # Check plugin commands
         try:
@@ -137,6 +159,17 @@ def show_help():
 | /suggest | Get behavior suggestions |
 | /stats | Show productivity stats |
 | /weather [city] | Show weather info |
+| /search [query] | Search the web |
+| /note [text] | Save a quick note |
+| /notes | List recent notes |
+| /remind [text] | Set a reminder |
+| /reminders | List pending reminders |
+| /music [play/pause/next] | Control music |
+| /system | Show system info |
+| /briefing | Daily briefing |
+| /remember [fact] | Store a memory |
+| /recall [query] | Recall a memory |
+| /workflows | List automation workflows |
 | /help | Show this help |
 | exit | Exit the assistant |
 
@@ -338,6 +371,116 @@ def show_stats():
     table.add_row("Total Tracked Time", f"{total_hours:.1f} hours")
 
     console.print(table)
+
+
+def cli_search(query: str):
+    if not query:
+        query = Prompt.ask("Search for")
+    try:
+        from core.smart_features import get_web_search
+        result = get_web_search().quick_answer(query)
+        console.print(Panel(result, title="Search Results", border_style="cyan"))
+    except Exception as e:
+        console.print(f"[red]Search error: {e}[/red]")
+
+def cli_note(content: str):
+    if not content:
+        content = Prompt.ask("Note")
+    try:
+        from core.smart_features import get_notes
+        console.print(f"[green]{get_notes().add_note(content)}[/green]")
+    except Exception as e:
+        console.print(f"[red]Note error: {e}[/red]")
+
+def cli_notes():
+    try:
+        from core.smart_features import get_notes
+        console.print(Panel(get_notes().list_recent(), title="Notes", border_style="cyan"))
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+def cli_remind(args: str):
+    if not args:
+        args = Prompt.ask("Remind me to")
+    try:
+        response = ai.chat(f"remind me {args}")
+        console.print(f"[green]{response}[/green]")
+    except Exception as e:
+        console.print(f"[red]Reminder error: {e}[/red]")
+
+def cli_reminders():
+    try:
+        from core.smart_features import get_reminder_system
+        pending = get_reminder_system().get_pending()
+        if not pending:
+            console.print("[green]No pending reminders.[/green]")
+        else:
+            text = "Pending reminders:\n"
+            for r in pending:
+                t = r['time'][:16]
+                text += f"  - {t}: {r['message']}\n"
+            console.print(Panel(text, title="Reminders", border_style="yellow"))
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+def cli_system():
+    try:
+        from core.smart_features import get_system_controller
+        console.print(Panel(get_system_controller().get_system_info(), title="System", border_style="green"))
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+def cli_briefing():
+    try:
+        from core.smart_features import get_briefing
+        console.print(Panel(get_briefing().generate(), title="Daily Briefing", border_style="cyan"))
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+def cli_remember(args: str):
+    if not args:
+        args = Prompt.ask("Remember what")
+    try:
+        response = ai.chat(f"remember that {args}")
+        console.print(f"[green]{response}[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+def cli_recall(args: str):
+    if not args:
+        args = Prompt.ask("Recall what")
+    try:
+        from core.smart_features import get_memory
+        console.print(get_memory().recall(args))
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+def cli_workflows():
+    try:
+        from core.smart_features import get_automation
+        console.print(Panel(get_automation().list_workflows(), title="Workflows", border_style="green"))
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+def cli_music(args: str):
+    try:
+        from core.smart_features import get_music
+        m = get_music()
+        cmd = args.lower().strip()
+        if cmd in ('play', 'resume'):
+            console.print(m.play())
+        elif cmd in ('pause', 'stop'):
+            console.print(m.pause())
+        elif cmd in ('next', 'skip'):
+            console.print(m.next_track())
+        elif cmd in ('prev', 'previous', 'back'):
+            console.print(m.previous_track())
+        elif cmd in ('status', 'now', ''):
+            console.print(m.status())
+        else:
+            console.print(f"[yellow]Unknown music command: {cmd}[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
 
 
 def show_weather(location: str = ""):

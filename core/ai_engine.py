@@ -248,6 +248,15 @@ class JarvisAI:
                 f"{stats['activities_logged']} activities logged"
             )
 
+            # Add persistent memories
+            try:
+                from core.smart_features import get_memory
+                memory_context = get_memory().get_context_for_ai()
+                if memory_context:
+                    context_parts.append(memory_context)
+            except Exception:
+                pass
+
         except Exception as e:
             logger.warning(f"Error building context: {e}")
 
@@ -299,12 +308,17 @@ Remember to:
 
     def _handle_direct_queries(self, message: str) -> Optional[str]:
         """Handle queries that should be answered directly without AI"""
-        # App launch commands - check before anything else
+        # App launch commands
         app_result = self._handle_app_launch(message)
         if app_result:
             return app_result
 
-        # Weather queries - always handle directly for real-time data
+        # Smart features (search, reminders, music, files, notes, system, memory, etc.)
+        smart_result = self._handle_smart_features(message)
+        if smart_result:
+            return smart_result
+
+        # Weather queries
         if any(word in message for word in ['weather', 'temperature', 'forecast']):
             return self._get_weather_response(message)
 
@@ -312,8 +326,258 @@ Remember to:
         if any(phrase in message for phrase in ['what time', 'current time', "what's the time"]):
             return f"The current time is {datetime.now().strftime('%H:%M on %A, %B %d, %Y')}"
 
-        # Return None to let Ollama handle other queries
+        # Date queries
+        if any(phrase in message for phrase in ['what date', "what's the date", 'today date', "what day"]):
+            return f"Today is {datetime.now().strftime('%A, %B %d, %Y')}"
+
         return None
+
+    def _handle_smart_features(self, message: str) -> Optional[str]:
+        """Route to smart features based on natural language"""
+        msg = message.lower().strip()
+
+        try:
+            from core.smart_features import (
+                get_screen, get_web_search, get_reminder_system, get_music,
+                get_file_manager, get_notes, get_system_controller, get_memory,
+                get_briefing, get_automation
+            )
+
+            # ---- CLIPBOARD ----
+            if any(p in msg for p in ['clipboard', 'what did i copy', "what's copied", 'paste']):
+                clip = get_screen().get_clipboard()
+                if clip:
+                    return f"Clipboard contents:\n{clip[:500]}"
+                return "Clipboard is empty."
+
+            # ---- SCREENSHOT / SCREEN ----
+            if any(p in msg for p in ["what's on my screen", 'read my screen', 'screen text', 'ocr']):
+                return get_screen().ocr_screenshot()
+
+            if any(p in msg for p in ['take screenshot', 'take a screenshot', 'screenshot', 'capture screen']):
+                path = get_screen().take_screenshot()
+                if path:
+                    return f"Screenshot saved to {path}"
+                return "Could not take screenshot."
+
+            # ---- WEB SEARCH ----
+            if any(p in msg for p in ['search for', 'search the web', 'google', 'look up', 'find out', 'what is', 'who is', 'define']):
+                # Extract search query
+                for prefix in ['search for', 'search the web for', 'google', 'look up', 'find out about', 'find out', 'define', 'what is', 'who is']:
+                    if prefix in msg:
+                        query = msg.split(prefix, 1)[-1].strip().rstrip('?.')
+                        if query:
+                            if prefix in ('what is', 'who is', 'define'):
+                                return get_web_search().quick_answer(query)
+                            return get_web_search().search_summary(query)
+                return None
+
+            # ---- REMINDERS ----
+            if any(p in msg for p in ['remind me', 'set a reminder', 'set reminder', 'alarm']):
+                return self._parse_reminder(msg)
+
+            if any(p in msg for p in ['my reminders', 'pending reminders', 'show reminders', 'list reminders']):
+                pending = get_reminder_system().get_pending()
+                if not pending:
+                    return "No pending reminders."
+                result = "Pending reminders:\n"
+                for r in pending:
+                    t = datetime.fromisoformat(r['time']).strftime('%I:%M %p')
+                    result += f"  - {t}: {r['message']}\n"
+                return result
+
+            # ---- MUSIC ----
+            music = get_music()
+            if any(p in msg for p in ['play music', 'resume music', 'resume playback']):
+                return music.play()
+            if any(p in msg for p in ['pause music', 'pause playback', 'stop music']):
+                return music.pause()
+            if any(p in msg for p in ['next song', 'next track', 'skip song', 'skip track']):
+                return music.next_track()
+            if any(p in msg for p in ['previous song', 'previous track', 'last song']):
+                return music.previous_track()
+            if any(p in msg for p in ["what's playing", 'now playing', 'current song', 'what song']):
+                return music.now_playing()
+
+            # ---- FILES ----
+            if any(p in msg for p in ['find file', 'find my', 'search file', 'where is my', 'locate']):
+                for prefix in ['find file', 'find my', 'search file', 'where is my', 'locate']:
+                    if prefix in msg:
+                        query = msg.split(prefix, 1)[-1].strip()
+                        if query:
+                            return get_file_manager().find_files_summary(query)
+                return None
+
+            if any(p in msg for p in ['recent downloads', 'show downloads', 'my downloads', 'downloaded files']):
+                return get_file_manager().list_recent_downloads()
+
+            if 'disk usage' in msg or 'disk space' in msg or 'storage' in msg:
+                return get_file_manager().get_disk_usage()
+
+            # ---- NOTES ----
+            if any(p in msg for p in ['take a note', 'take note', 'note this', 'save note', 'write down']):
+                for prefix in ['take a note', 'take note', 'note this', 'save note', 'write down']:
+                    if prefix in msg:
+                        content = msg.split(prefix, 1)[-1].strip().lstrip(':').strip()
+                        if content:
+                            return get_notes().add_note(content)
+                return "What would you like me to note?"
+
+            if any(p in msg for p in ['my notes', 'show notes', 'list notes', 'recent notes']):
+                return get_notes().list_recent()
+
+            if any(p in msg for p in ['search notes', 'find note', 'find in notes']):
+                for prefix in ['search notes', 'find note', 'find in notes']:
+                    if prefix in msg:
+                        query = msg.split(prefix, 1)[-1].strip()
+                        if query:
+                            return get_notes().search_notes(query)
+                return None
+
+            # ---- SYSTEM ----
+            if any(p in msg for p in ['system info', 'system status', 'how is my system', 'cpu usage', 'ram usage', 'memory usage']):
+                return get_system_controller().get_system_info()
+
+            if any(p in msg for p in ['kill process', 'kill app', 'force close', 'force quit']):
+                for prefix in ['kill process', 'kill app', 'force close', 'force quit']:
+                    if prefix in msg:
+                        proc = msg.split(prefix, 1)[-1].strip()
+                        if proc:
+                            return get_system_controller().kill_process(proc)
+                return None
+
+            if any(p in msg for p in ['wifi status', 'wifi', 'internet connection', 'am i connected']):
+                return get_system_controller().get_wifi_status()
+
+            if any(p in msg for p in ['battery', 'battery status', 'battery level', 'charge level']):
+                return get_system_controller().get_battery()
+
+            if any(p in msg for p in ['ip address', 'my ip', 'what is my ip']):
+                return get_system_controller().get_ip_address()
+
+            if any(p in msg for p in ['brightness']):
+                match = re.search(r'(\d+)', msg)
+                if match:
+                    return get_system_controller().set_brightness(int(match.group(1)))
+                return "Set brightness to what level? (0-100)"
+
+            if msg in ['shutdown', 'shut down', 'power off', 'turn off']:
+                return get_system_controller().shutdown('shutdown')
+            if msg in ['restart', 'reboot']:
+                return get_system_controller().shutdown('restart')
+            if msg in ['sleep', 'go to sleep', 'suspend']:
+                return get_system_controller().shutdown('sleep')
+            if msg in ['logout', 'log out', 'sign out']:
+                return get_system_controller().shutdown('logout')
+
+            # ---- MEMORY ----
+            if any(p in msg for p in ['remember that', 'remember this', 'remember my']):
+                for prefix in ['remember that', 'remember this', 'remember my']:
+                    if prefix in msg:
+                        content = msg.split(prefix, 1)[-1].strip()
+                        if content:
+                            # Try to split "key is value" pattern
+                            if ' is ' in content:
+                                key, _, value = content.partition(' is ')
+                                return get_memory().remember(key.strip(), value.strip())
+                            return get_memory().remember(content[:50], content)
+                return None
+
+            if any(p in msg for p in ['what do you remember', 'my memories', 'show memories', 'list memories']):
+                return get_memory().list_memories()
+
+            if any(p in msg for p in ['do you remember', 'recall', 'what is my', "what's my"]):
+                for prefix in ['do you remember', 'recall', 'what is my', "what's my"]:
+                    if prefix in msg:
+                        query = msg.split(prefix, 1)[-1].strip().rstrip('?')
+                        if query:
+                            return get_memory().recall(query)
+                return None
+
+            if any(p in msg for p in ['forget about', 'forget my', 'delete memory']):
+                for prefix in ['forget about', 'forget my', 'delete memory']:
+                    if prefix in msg:
+                        key = msg.split(prefix, 1)[-1].strip()
+                        if key:
+                            return get_memory().forget(key)
+                return None
+
+            # ---- DAILY BRIEFING ----
+            if any(p in msg for p in ['daily briefing', 'morning briefing', 'brief me', "what's my day look like", 'my day']):
+                return get_briefing().generate()
+
+            # ---- WORKFLOWS ----
+            if any(p in msg for p in ['goodnight', 'good night']):
+                return get_automation().run_workflow('goodnight')
+            if any(p in msg for p in ['work mode', 'start work', 'time to work']):
+                return get_automation().run_workflow('work mode')
+            if any(p in msg for p in ['break time', 'take a break']):
+                return get_automation().run_workflow('break time')
+
+            if any(p in msg for p in ['list workflows', 'my workflows', 'show workflows']):
+                return get_automation().list_workflows()
+
+            if 'run workflow' in msg:
+                name = msg.split('run workflow', 1)[-1].strip()
+                if name:
+                    return get_automation().run_workflow(name)
+
+        except ImportError as e:
+            logger.error(f"Smart features import error: {e}")
+        except Exception as e:
+            logger.error(f"Smart features error: {e}")
+
+        return None
+
+    def _parse_reminder(self, msg: str) -> str:
+        """Parse natural language reminder"""
+        from core.smart_features import get_reminder_system
+
+        # "remind me in 30 minutes to call mom"
+        match = re.search(r'in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)', msg)
+        if match:
+            amount = int(match.group(1))
+            unit = match.group(2).lower()
+            # Extract the reminder message
+            reminder_msg = msg
+            for prefix in ['remind me', 'set a reminder', 'set reminder']:
+                if prefix in reminder_msg:
+                    reminder_msg = reminder_msg.split(prefix, 1)[-1]
+            # Remove the time part
+            reminder_msg = re.sub(r'in\s+\d+\s*(minutes?|mins?|hours?|hrs?)', '', reminder_msg)
+            for word in ['to', 'that', 'about']:
+                reminder_msg = reminder_msg.lstrip().removeprefix(word).strip()
+            reminder_msg = reminder_msg.strip() or "Reminder!"
+
+            if 'hour' in unit or 'hr' in unit:
+                return get_reminder_system().add_reminder(reminder_msg, hours=amount)
+            return get_reminder_system().add_reminder(reminder_msg, minutes=amount)
+
+        # "remind me at 3pm to call mom"
+        match = re.search(r'at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm|AM|PM)?)', msg)
+        if match:
+            time_str = match.group(1)
+            reminder_msg = msg
+            for prefix in ['remind me', 'set a reminder', 'set reminder']:
+                if prefix in reminder_msg:
+                    reminder_msg = reminder_msg.split(prefix, 1)[-1]
+            reminder_msg = re.sub(r'at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|AM|PM)?', '', reminder_msg)
+            for word in ['to', 'that', 'about']:
+                reminder_msg = reminder_msg.lstrip().removeprefix(word).strip()
+            reminder_msg = reminder_msg.strip() or "Reminder!"
+
+            return get_reminder_system().add_reminder(reminder_msg, at_time=time_str)
+
+        # Simple: "remind me to buy milk"
+        reminder_msg = msg
+        for prefix in ['remind me', 'set a reminder', 'set reminder']:
+            if prefix in reminder_msg:
+                reminder_msg = reminder_msg.split(prefix, 1)[-1]
+        for word in ['to', 'that', 'about']:
+            reminder_msg = reminder_msg.lstrip().removeprefix(word).strip()
+        reminder_msg = reminder_msg.strip() or "Reminder!"
+
+        return get_reminder_system().add_reminder(reminder_msg, minutes=5)
 
     def _handle_app_launch(self, message: str) -> Optional[str]:
         """Detect and execute app launch commands from natural language"""

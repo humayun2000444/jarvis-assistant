@@ -9,8 +9,6 @@ import queue
 import time
 from typing import Optional, Callable
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 # Speech Recognition
 try:
     import speech_recognition as sr
@@ -298,6 +296,9 @@ class VoiceCommandHandler:
         'give me a summary': 'show_summary',
     }
 
+    # Launch triggers for app commands
+    LAUNCH_TRIGGERS = ['open', 'start', 'launch', 'run', 'execute', 'bring up']
+
     def __init__(self, assistant: VoiceAssistant):
         self.assistant = assistant
 
@@ -305,6 +306,7 @@ class VoiceCommandHandler:
         """Check if text is a known command and handle it"""
         text_lower = text.lower().strip()
 
+        # Check static commands first
         for phrase, action in self.COMMANDS.items():
             if phrase in text_lower:
                 if callable(action):
@@ -312,6 +314,27 @@ class VoiceCommandHandler:
                 else:
                     # Return action name for GUI to handle
                     return f"__command__:{action}"
+
+        # Check app launch commands
+        if any(trigger in text_lower for trigger in self.LAUNCH_TRIGGERS):
+            try:
+                from core.features import QuickCommands
+
+                # Try predefined commands first
+                cmd_name = QuickCommands.resolve_app_command(text_lower)
+                if cmd_name:
+                    success = QuickCommands.execute(cmd_name)
+                    app_desc = QuickCommands.COMMANDS[cmd_name]['description']
+                    if success:
+                        return f"Done! {app_desc}."
+                    else:
+                        return f"Sorry, I couldn't {app_desc.lower()}."
+
+                # Try arbitrary app launch
+                success, msg = QuickCommands.launch_arbitrary_app(text_lower)
+                return msg
+            except Exception:
+                pass
 
         return None
 

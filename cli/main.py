@@ -5,9 +5,6 @@ JARVIS CLI - Command Line Interface
 import sys
 import os
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import click
 from rich.console import Console
 from rich.table import Table
@@ -72,7 +69,15 @@ def interactive_mode():
             console.print(f"\n\n[cyan]{ASSISTANT_NAME}:[/cyan] Goodbye!\n")
             break
         except Exception as e:
-            console.print(f"[red]Error: {e}[/red]")
+            error_msg = str(e)
+            if "database" in error_msg.lower() or "sqlite" in error_msg.lower():
+                console.print(f"[red]Database error: {e}[/red]")
+                console.print("[yellow]Try: jarvis --repair database[/yellow]")
+            elif "ollama" in error_msg.lower() or "connection" in error_msg.lower():
+                console.print(f"[red]AI connection error: {e}[/red]")
+                console.print("[yellow]Ensure Ollama is running: ollama serve[/yellow]")
+            else:
+                console.print(f"[red]Error: {e}[/red]")
 
 
 def handle_command(cmd: str):
@@ -99,7 +104,20 @@ def handle_command(cmd: str):
         show_suggestions()
     elif command == 'stats':
         show_stats()
+    elif command == 'weather':
+        show_weather(args)
     else:
+        # Check plugin commands
+        try:
+            from plugins.loader import get_registry
+            registry = get_registry()
+            if command in registry.commands:
+                handler = registry.commands[command].get('handler')
+                if handler:
+                    handler(args)
+                    return
+        except ImportError:
+            pass
         console.print(f"[yellow]Unknown command: {command}. Type /help for available commands.[/yellow]")
 
 
@@ -118,6 +136,7 @@ def show_help():
 | /summary | Show daily summary |
 | /suggest | Get behavior suggestions |
 | /stats | Show productivity stats |
+| /weather [city] | Show weather info |
 | /help | Show this help |
 | exit | Exit the assistant |
 
@@ -197,10 +216,17 @@ def complete_task(task_id_str: str):
     """Mark task as completed"""
     try:
         task_id = int(task_id_str)
+        # Get task title before completing
+        tasks = db.get_pending_tasks()
+        task_title = next((t['title'] for t in tasks if t['id'] == task_id), None)
+
         if db.complete_task(task_id):
-            console.print(f"[green]Task {task_id} marked as complete![/green]")
+            if task_title:
+                console.print(f"[green]Task {task_id} '{task_title}' marked as complete![/green]")
+            else:
+                console.print(f"[green]Task {task_id} marked as complete![/green]")
         else:
-            console.print(f"[red]Task {task_id} not found[/red]")
+            console.print(f"[red]Task {task_id} not found or already completed[/red]")
     except ValueError:
         console.print("[red]Please provide a valid task ID[/red]")
 
@@ -312,6 +338,19 @@ def show_stats():
     table.add_row("Total Tracked Time", f"{total_hours:.1f} hours")
 
     console.print(table)
+
+
+def show_weather(location: str = ""):
+    """Show weather information"""
+    try:
+        from core.weather import get_weather
+        loc = location.strip() if location else "auto"
+        weather = get_weather(loc)
+        console.print(Panel(weather, title="Weather", border_style="cyan"))
+    except ImportError:
+        console.print("[red]Weather service not available. Install: pip install requests[/red]")
+    except Exception as e:
+        console.print(f"[red]Weather error: {e}[/red]")
 
 
 @cli.command()

@@ -114,6 +114,12 @@ class VoiceEngine:
         except ImportError:
             self.edge_tts_available = False
 
+        # Persistent asyncio event loop for edge-tts
+        self._async_loop = None
+        self._async_thread = None
+        if self.edge_tts_available:
+            self._start_async_loop()
+
         # Fallback to pyttsx3 if edge-tts not available
         self.pyttsx_engine = None
         if not self.edge_tts_available and TTS_AVAILABLE:
@@ -127,6 +133,18 @@ class VoiceEngine:
                 self.pyttsx_engine.setProperty('rate', 175)
             except Exception:
                 pass
+
+    def _start_async_loop(self):
+        """Start a persistent asyncio event loop on a background thread"""
+        import asyncio
+
+        def _run_loop(loop):
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+
+        self._async_loop = asyncio.new_event_loop()
+        self._async_thread = threading.Thread(target=_run_loop, args=(self._async_loop,), daemon=True)
+        self._async_thread.start()
 
     def set_voice(self, voice_name: str):
         """Set the voice to use"""
@@ -186,13 +204,18 @@ class VoiceEngine:
                         except FileNotFoundError:
                             continue
 
-                # Run async function
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(generate_and_play())
-                finally:
-                    loop.close()
+                # Use persistent event loop
+                if self._async_loop and self._async_loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(generate_and_play(), self._async_loop)
+                    future.result(timeout=30)
+                else:
+                    # Fallback if loop not available
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        loop.run_until_complete(generate_and_play())
+                    finally:
+                        loop.close()
 
             except Exception as e:
                 print(f"Voice error: {e}")
@@ -200,10 +223,9 @@ class VoiceEngine:
                 self.speaking = False
                 # Cleanup temp file
                 try:
-                    import os
                     if os.path.exists(self._temp_file):
                         os.remove(self._temp_file)
-                except:
+                except Exception:
                     pass
 
         def _speak_pyttsx():
@@ -255,12 +277,17 @@ class VoiceEngine:
                         stderr=subprocess.DEVNULL
                     )
 
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(generate_and_play())
-                finally:
-                    loop.close()
+                # Use persistent event loop
+                if self._async_loop and self._async_loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(generate_and_play(), self._async_loop)
+                    future.result(timeout=30)
+                else:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        loop.run_until_complete(generate_and_play())
+                    finally:
+                        loop.close()
 
             except Exception:
                 pass
@@ -279,13 +306,15 @@ class VoiceEngine:
         if self._process:
             try:
                 self._process.terminate()
-            except:
+            except Exception:
                 pass
         if self.pyttsx_engine:
             try:
                 self.pyttsx_engine.stop()
-            except:
+            except Exception:
                 pass
+        if self._async_loop and self._async_loop.is_running():
+            self._async_loop.call_soon_threadsafe(self._async_loop.stop)
         self.speaking = False
 
     def toggle(self):
@@ -521,25 +550,32 @@ class QuickCommands:
     """Quick command palette system"""
 
     COMMANDS = {
-        'lock': {
-            'description': 'Lock the screen',
-            'action': lambda: subprocess.run(['gnome-screensaver-command', '-l'], capture_output=True)
+        # Browsers
+        'chrome': {
+            'description': 'Open Google Chrome',
+            'action': lambda: subprocess.Popen(['google-chrome-stable'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         },
-        'screenshot': {
-            'description': 'Take a screenshot',
-            'action': lambda: subprocess.run(['gnome-screenshot'], capture_output=True)
+        'firefox': {
+            'description': 'Open Firefox',
+            'action': lambda: subprocess.Popen(['firefox'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        },
+        'browser': {
+            'description': 'Open default web browser',
+            'action': lambda: subprocess.Popen(['xdg-open', 'https://google.com'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        },
+        # Development
+        'vscode': {
+            'description': 'Open VS Code',
+            'action': lambda: subprocess.Popen(['code'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         },
         'terminal': {
             'description': 'Open terminal',
             'action': lambda: subprocess.Popen(['gnome-terminal'])
         },
+        # System
         'files': {
             'description': 'Open file manager',
             'action': lambda: subprocess.Popen(['nautilus', '.'])
-        },
-        'browser': {
-            'description': 'Open web browser',
-            'action': lambda: subprocess.Popen(['xdg-open', 'https://google.com'])
         },
         'calculator': {
             'description': 'Open calculator',
@@ -549,6 +585,15 @@ class QuickCommands:
             'description': 'Open system settings',
             'action': lambda: subprocess.Popen(['gnome-control-center'])
         },
+        'lock': {
+            'description': 'Lock the screen',
+            'action': lambda: subprocess.run(['gnome-screensaver-command', '-l'], capture_output=True)
+        },
+        'screenshot': {
+            'description': 'Take a screenshot',
+            'action': lambda: subprocess.run(['gnome-screenshot'], capture_output=True)
+        },
+        # Volume
         'volume_up': {
             'description': 'Increase volume',
             'action': lambda: subprocess.run(['pactl', 'set-sink-volume', '@DEFAULT_SINK@', '+10%'], capture_output=True)
@@ -562,6 +607,171 @@ class QuickCommands:
             'action': lambda: subprocess.run(['pactl', 'set-sink-mute', '@DEFAULT_SINK@', 'toggle'], capture_output=True)
         },
     }
+
+    # Natural language aliases -> command names
+    APP_ALIASES = {
+        'google chrome': 'chrome', 'google-chrome': 'chrome', 'chromium': 'chrome',
+        'mozilla firefox': 'firefox',
+        'visual studio code': 'vscode', 'vs code': 'vscode', 'code editor': 'vscode',
+        'file manager': 'files', 'nautilus': 'files', 'folder': 'files', 'folders': 'files',
+        'file explorer': 'files',
+        'gnome terminal': 'terminal', 'console': 'terminal', 'shell': 'terminal',
+        'command line': 'terminal', 'cmd': 'terminal',
+        'calc': 'calculator',
+        'system settings': 'settings', 'preferences': 'settings', 'control center': 'settings',
+        'web browser': 'browser',
+        'screen lock': 'lock', 'lock screen': 'lock',
+        'volume up': 'volume_up', 'louder': 'volume_up', 'turn up': 'volume_up',
+        'volume down': 'volume_down', 'quieter': 'volume_down', 'turn down': 'volume_down',
+        'unmute': 'mute', 'toggle mute': 'mute',
+    }
+
+    @classmethod
+    def resolve_app_command(cls, text: str) -> Optional[str]:
+        """Resolve natural language to a command name. Returns command name or None."""
+        text_lower = text.lower().strip()
+
+        # Direct command match
+        if text_lower in cls.COMMANDS:
+            return text_lower
+
+        # Alias match
+        for alias, cmd_name in cls.APP_ALIASES.items():
+            if alias in text_lower:
+                return cmd_name
+
+        # Fuzzy: check if any command name appears in the text
+        for cmd_name in cls.COMMANDS:
+            if cmd_name in text_lower:
+                return cmd_name
+
+        return None
+
+    @classmethod
+    def launch_arbitrary_app(cls, app_name: str) -> tuple:
+        """
+        Try to launch any installed application by name.
+        Returns (success: bool, message: str)
+        """
+        import shutil
+
+        app_clean = app_name.lower().strip()
+
+        # Strip common prefixes from the voice/text input
+        for prefix in ['open', 'start', 'launch', 'run', 'execute', 'bring up']:
+            if app_clean.startswith(prefix):
+                app_clean = app_clean[len(prefix):].strip()
+
+        if not app_clean:
+            return False, "No application name provided."
+
+        # Build candidate binary names to try
+        candidates = [
+            app_clean,                              # e.g. "spotify"
+            app_clean.replace(' ', '-'),             # e.g. "google-chrome"
+            app_clean.replace(' ', ''),              # e.g. "googlechrome"
+        ]
+
+        # Common app name -> binary mappings
+        app_binary_map = {
+            'chrome': 'google-chrome-stable',
+            'google chrome': 'google-chrome-stable',
+            'vs code': 'code',
+            'vscode': 'code',
+            'visual studio code': 'code',
+            'file manager': 'nautilus',
+            'files': 'nautilus',
+            'text editor': 'gedit',
+            'notepad': 'gedit',
+            'music': 'rhythmbox',
+            'videos': 'totem',
+            'image viewer': 'eog',
+            'photos': 'eog',
+            'disk usage': 'baobab',
+            'system monitor': 'gnome-system-monitor',
+            'task manager': 'gnome-system-monitor',
+            'bluetooth': 'blueman-manager',
+            'screen recorder': 'gnome-screenshot',
+        }
+
+        # Check known mappings first
+        if app_clean in app_binary_map:
+            candidates.insert(0, app_binary_map[app_clean])
+
+        # Try each candidate
+        for binary in candidates:
+            binary_path = shutil.which(binary)
+            if binary_path:
+                try:
+                    subprocess.Popen(
+                        [binary_path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True
+                    )
+                    return True, f"Launched {app_clean}."
+                except Exception as e:
+                    return False, f"Found {binary} but couldn't launch it: {e}"
+
+        # Try finding .desktop files as last resort
+        desktop_result = cls._find_and_launch_desktop_app(app_clean)
+        if desktop_result:
+            return desktop_result
+
+        return False, f"Couldn't find '{app_clean}' on your system."
+
+    @classmethod
+    def _find_and_launch_desktop_app(cls, app_name: str) -> Optional[tuple]:
+        """Search .desktop files for an application and launch it"""
+        import glob
+
+        search_dirs = [
+            os.path.expanduser("~/.local/share/applications"),
+            "/usr/share/applications",
+            "/usr/local/share/applications",
+            "/var/lib/snapd/desktop/applications",
+            "/var/lib/flatpak/exports/share/applications",
+        ]
+
+        for search_dir in search_dirs:
+            if not os.path.isdir(search_dir):
+                continue
+
+            for desktop_file in glob.glob(os.path.join(search_dir, "*.desktop")):
+                try:
+                    name = ""
+                    exec_cmd = ""
+                    with open(desktop_file, 'r', errors='ignore') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith("Name="):
+                                name = line[5:].lower()
+                            elif line.startswith("Exec="):
+                                exec_cmd = line[5:]
+                            if name and exec_cmd:
+                                break
+
+                    if app_name in name and exec_cmd:
+                        # Clean exec command (remove %u, %f, etc.)
+                        exec_parts = exec_cmd.split()
+                        clean_cmd = []
+                        for part in exec_parts:
+                            if part.startswith('%'):
+                                continue
+                            clean_cmd.append(part)
+
+                        if clean_cmd:
+                            subprocess.Popen(
+                                clean_cmd,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                start_new_session=True
+                            )
+                            return True, f"Launched {name}."
+                except Exception:
+                    continue
+
+        return None
 
     @classmethod
     def execute(cls, command: str) -> bool:

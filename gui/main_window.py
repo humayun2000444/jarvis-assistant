@@ -6,8 +6,7 @@ Enhanced with System Monitor, Voice, Pomodoro, Health Reminders
 import sys
 import os
 import math
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import html as html_module
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -658,6 +657,77 @@ class VoiceListenerThread(QThread):
             self.listening_stopped.emit()
 
 
+class WakeWordListenerThread(QThread):
+    """Background thread that always listens for 'Hey Jarvis' wake word"""
+    wake_word_detected = pyqtSignal()
+    command_recognized = pyqtSignal(str)  # If user says "Hey Jarvis, open chrome"
+    status_changed = pyqtSignal(str)      # For UI status updates
+
+    WAKE_WORDS = ['jarvis', 'hey jarvis', 'ok jarvis', 'hello jarvis', 'hey travis',
+                  'hey jervis', 'hey jarves', 'jarves']  # Common misrecognitions
+
+    def __init__(self):
+        super().__init__()
+        self._running = False
+        self._paused = False
+        self.voice_assistant = None
+        if VOICE_ASSISTANT_AVAILABLE:
+            self.voice_assistant = VoiceAssistant()
+
+    def run(self):
+        if not self.voice_assistant:
+            return
+
+        self._running = True
+        self.status_changed.emit("Wake word listener active")
+
+        while self._running:
+            if self._paused:
+                self.msleep(200)
+                continue
+
+            try:
+                # Short listen for wake word detection
+                text = self.voice_assistant.listen_once(timeout=3.0, phrase_time_limit=5.0)
+
+                if not text or not self._running:
+                    continue
+
+                text_lower = text.lower().strip()
+
+                # Check if any wake word is in what was said
+                wake_found = False
+                for wake in self.WAKE_WORDS:
+                    if wake in text_lower:
+                        wake_found = True
+                        # Check if there's a command after the wake word
+                        after_wake = text_lower.split(wake, 1)[-1].strip()
+                        if after_wake and len(after_wake) > 2:
+                            # User said "Hey Jarvis, open chrome" — emit the command part
+                            self.command_recognized.emit(after_wake)
+                        else:
+                            # Just "Hey Jarvis" — wake up and listen for next command
+                            self.wake_word_detected.emit()
+                        break
+
+            except Exception:
+                # Don't crash on transient errors, just keep listening
+                self.msleep(500)
+
+    def pause(self):
+        """Pause listening (while JARVIS is speaking or processing)"""
+        self._paused = True
+
+    def resume(self):
+        """Resume listening"""
+        self._paused = False
+
+    def stop(self):
+        """Stop the listener"""
+        self._running = False
+        self._paused = False
+
+
 class CommandPalette(QDialog):
     """Quick command palette (Ctrl+K)"""
 
@@ -812,6 +882,21 @@ class AddTaskDialog(QDialog):
         """)
         layout.addRow(QLabel("PRIORITY:"), self.priority_combo)
 
+        self.due_date_edit = QDateEdit()
+        self.due_date_edit.setCalendarPopup(True)
+        self.due_date_edit.setDate(QDate.currentDate())
+        self.due_date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.due_date_edit.setStyleSheet(f"""
+            QDateEdit {{
+                background: {COLORS['bg_panel']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['arc_blue_dim']};
+                border-radius: 5px;
+                padding: 8px;
+            }}
+        """)
+        layout.addRow(QLabel("DUE DATE:"), self.due_date_edit)
+
         self.category_edit = QLineEdit()
         self.category_edit.setPlaceholderText("CATEGORY...")
         self.category_edit.setStyleSheet(self.title_edit.styleSheet())
@@ -839,6 +924,7 @@ class AddTaskDialog(QDialog):
         return {
             'title': self.title_edit.text(),
             'priority': self.priority_combo.currentText().lower(),
+            'due_date': self.due_date_edit.date().toString("yyyy-MM-dd"),
             'category': self.category_edit.text() or None,
         }
 
@@ -852,6 +938,9 @@ class JarvisMainWindow(QMainWindow):
         self.ai = get_ai()
         self.worker = None
         self.voice_enabled = True
+        self._voice_triggered = False       # True when current message came from voice
+        self._conversation_mode = False     # Continuous voice conversation mode
+        self._current_response = ""         # Accumulate streamed response for TTS
 
         self.setWindowTitle(f"J.A.R.V.I.S. - {USER_NAME.upper()}")
         self.setMinimumSize(1400, 900)
@@ -869,6 +958,10 @@ class JarvisMainWindow(QMainWindow):
         self.health_reminder = HealthReminder(callback=self.show_health_reminder)
         self.health_reminder.start()
 
+        # Wake word listener — always on
+        self.wake_listener = None
+        self._start_wake_word_listener()
+
         self.drag_pos = None
 
     def setup_shortcuts(self):
@@ -880,6 +973,14 @@ class JarvisMainWindow(QMainWindow):
         # Voice toggle
         voice_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
         voice_shortcut.activated.connect(self.toggle_voice)
+
+        # Quit
+        quit_shortcut = QShortcut(QKeySequence("Ctrl+Q"), self)
+        quit_shortcut.activated.connect(self.force_quit)
+
+        # Conversation mode
+        convo_shortcut = QShortcut(QKeySequence("Ctrl+J"), self)
+        convo_shortcut.activated.connect(self.toggle_conversation_mode)
 
     def setup_ui(self):
         """Setup the enhanced UI"""
@@ -965,6 +1066,23 @@ class JarvisMainWindow(QMainWindow):
 
         layout.addStretch()
 
+        # Conversation mode toggle
+        self.convo_btn = QPushButton("💬")
+        self.convo_btn.setFixedSize(30, 30)
+        self.convo_btn.clicked.connect(self.toggle_conversation_mode)
+        self.convo_btn.setToolTip("Toggle Voice Conversation Mode (Ctrl+J)")
+        self.convo_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {COLORS['arc_blue']};
+                border: 1px solid {COLORS['arc_blue_dim']};
+                border-radius: 15px;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{ background: {COLORS['arc_blue_dim']}; }}
+        """)
+        layout.addWidget(self.convo_btn)
+
         # Voice toggle
         self.voice_btn = QPushButton("🔊")
         self.voice_btn.setFixedSize(30, 30)
@@ -996,6 +1114,12 @@ class JarvisMainWindow(QMainWindow):
         minimize_btn.clicked.connect(self.showMinimized)
         minimize_btn.setStyleSheet(self.voice_btn.styleSheet())
         layout.addWidget(minimize_btn)
+
+        maximize_btn = QPushButton("□")
+        maximize_btn.setFixedSize(30, 30)
+        maximize_btn.clicked.connect(self.toggle_maximize)
+        maximize_btn.setStyleSheet(self.voice_btn.styleSheet())
+        layout.addWidget(maximize_btn)
 
         close_btn = QPushButton("✕")
         close_btn.setFixedSize(30, 30)
@@ -1223,7 +1347,7 @@ class JarvisMainWindow(QMainWindow):
         input_layout.addWidget(self.mic_btn)
 
         self.chat_input = QLineEdit()
-        self.chat_input.setPlaceholderText("ENTER COMMAND OR QUERY... (or click 🎤 to speak)")
+        self.chat_input.setPlaceholderText("Say 'Hey Jarvis' or type here...")
         self.chat_input.returnPressed.connect(self.send_message)
         self.chat_input.setStyleSheet(f"""
             QLineEdit {{
@@ -1438,10 +1562,13 @@ class JarvisMainWindow(QMainWindow):
         color = COLORS['arc_blue'] if is_assistant else COLORS['gold']
         prefix = "◈" if is_assistant else "►"
 
+        safe_sender = html_module.escape(sender)
+        safe_message = html_module.escape(message)
+
         html = f'''
         <p style="margin: 10px 0;">
-            <span style="color: {color}; font-weight: bold;">{prefix} {sender}:</span><br/>
-            <span style="color: {COLORS['text']};">{message}</span>
+            <span style="color: {color}; font-weight: bold;">{prefix} {safe_sender}:</span><br/>
+            <span style="color: {COLORS['text']};">{safe_message}</span>
         </p>
         '''
         cursor.insertHtml(html)
@@ -1457,6 +1584,7 @@ class JarvisMainWindow(QMainWindow):
             return
 
         self.chat_input.clear()
+        self._current_response = ""
         self.append_message(USER_NAME.upper(), message, is_assistant=False)
 
         self.worker = AIWorker(message)
@@ -1472,6 +1600,7 @@ class JarvisMainWindow(QMainWindow):
         self.worker.start()
 
     def handle_response_chunk(self, chunk: str):
+        self._current_response += chunk
         cursor = self.chat_display.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertText(chunk)
@@ -1485,6 +1614,143 @@ class JarvisMainWindow(QMainWindow):
         self.chat_input.setEnabled(True)
         self.chat_input.setFocus()
         self.waveform.stop()
+
+        # If this was a voice-triggered message, speak the response back
+        if self._voice_triggered and self.voice_enabled and self._current_response:
+            self._voice_triggered = False
+            # Speak response, then auto-listen if in conversation mode
+            self.waveform.start()
+            voice_engine.speak(self._current_response, block=False)
+            if self._conversation_mode:
+                # Wait for speech to finish, then listen again
+                self._wait_and_relisten()
+            else:
+                QTimer.singleShot(3000, self.waveform.stop)
+        elif self._voice_triggered:
+            self._voice_triggered = False
+            if self._conversation_mode:
+                QTimer.singleShot(500, self.start_voice_listening)
+
+    def _wait_and_relisten(self):
+        """Wait for TTS to finish, then start listening again"""
+        def _check_speaking():
+            if voice_engine.speaking:
+                QTimer.singleShot(300, _check_speaking)
+            else:
+                self.waveform.stop()
+                if self._conversation_mode:
+                    QTimer.singleShot(500, self.start_voice_listening)
+                else:
+                    # Not in conversation mode anymore, resume wake listener
+                    if self.wake_listener:
+                        self.wake_listener.resume()
+        QTimer.singleShot(500, _check_speaking)
+
+    def _start_wake_word_listener(self):
+        """Start the always-on wake word listener"""
+        if not VOICE_ASSISTANT_AVAILABLE:
+            return
+
+        self.wake_listener = WakeWordListenerThread()
+        self.wake_listener.wake_word_detected.connect(self._on_wake_word)
+        self.wake_listener.command_recognized.connect(self._on_wake_command)
+        self.wake_listener.start()
+
+    def _on_wake_word(self):
+        """Handle wake word detection — JARVIS wakes up"""
+        if self.is_listening or (self.worker and self.worker.isRunning()):
+            return  # Already busy
+
+        # Pause wake listener while we're interacting
+        if self.wake_listener:
+            self.wake_listener.pause()
+
+        # Visual + audio acknowledgment
+        self.append_message("SYSTEM", "Yes? I'm listening...", is_assistant=True)
+        voice_engine.speak("Yes?", block=False)
+
+        # Enable conversation mode and start listening
+        self._conversation_mode = True
+        self._voice_triggered = True
+        self.convo_btn.setText("🗣️")
+        self.convo_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {COLORS['success']};
+                color: black;
+                border: 2px solid {COLORS['success']};
+                border-radius: 15px;
+                font-size: 14px;
+            }}
+        """)
+
+        # Wait for "Yes?" to finish, then listen
+        QTimer.singleShot(1000, self.start_voice_listening)
+
+    def _on_wake_command(self, command: str):
+        """Handle wake word + command (e.g. 'Hey Jarvis, open chrome')"""
+        if self.is_listening or (self.worker and self.worker.isRunning()):
+            return
+
+        if self.wake_listener:
+            self.wake_listener.pause()
+
+        # Process the command directly
+        self._voice_triggered = True
+        self._conversation_mode = True
+        self.convo_btn.setText("🗣️")
+        self.convo_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {COLORS['success']};
+                color: black;
+                border: 2px solid {COLORS['success']};
+                border-radius: 15px;
+                font-size: 14px;
+            }}
+        """)
+
+        self.chat_input.setText(command)
+        QTimer.singleShot(300, self.send_message)
+
+    def toggle_conversation_mode(self):
+        """Toggle continuous voice conversation mode"""
+        self._conversation_mode = not self._conversation_mode
+
+        if self._conversation_mode:
+            # Enable voice output if not already
+            if not self.voice_enabled:
+                self.voice_enabled = True
+                voice_engine.enabled = True
+                self.voice_btn.setText("🔊")
+
+            self.convo_btn.setText("🗣️")
+            self.convo_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {COLORS['success']};
+                    color: black;
+                    border: 2px solid {COLORS['success']};
+                    border-radius: 15px;
+                    font-size: 14px;
+                }}
+            """)
+            self.append_message("SYSTEM", "Voice conversation mode ON. Speak naturally — I'll listen and respond. Click 💬 or press Ctrl+J to stop.", is_assistant=True)
+            # Start listening immediately
+            QTimer.singleShot(500, self.start_voice_listening)
+        else:
+            self.convo_btn.setText("💬")
+            self.convo_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    color: {COLORS['arc_blue']};
+                    border: 1px solid {COLORS['arc_blue_dim']};
+                    border-radius: 15px;
+                    font-size: 14px;
+                }}
+                QPushButton:hover {{ background: {COLORS['arc_blue_dim']}; }}
+            """)
+            self.append_message("SYSTEM", "Voice conversation mode OFF.", is_assistant=True)
+            # Resume wake word listener
+            if self.wake_listener:
+                self.wake_listener.resume()
 
     def toggle_voice(self):
         """Toggle voice output"""
@@ -1500,6 +1766,10 @@ class JarvisMainWindow(QMainWindow):
         if not VOICE_ASSISTANT_AVAILABLE:
             self.append_message("SYSTEM", "Voice input not available. Install: pip install SpeechRecognition")
             return
+
+        # Pause wake listener to avoid mic conflict
+        if self.wake_listener:
+            self.wake_listener.pause()
 
         self.is_listening = True
         self.mic_btn.setText("🔴")
@@ -1526,10 +1796,34 @@ class JarvisMainWindow(QMainWindow):
 
     def on_voice_recognized(self, text: str):
         """Handle recognized speech"""
+        self._convo_miss_count = 0  # Reset miss counter
         self.chat_input.setText(text)
-        self.append_message("VOICE", text)
+        self._voice_triggered = True
+
+        # Check for goodbye/stop commands during conversation
+        text_lower = text.lower().strip()
+        if self._conversation_mode and any(cmd in text_lower for cmd in ['goodbye', 'bye', 'stop listening', 'stop talking', 'shut up']):
+            self._conversation_mode = False
+            self.convo_btn.setText("💬")
+            self.convo_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    color: {COLORS['arc_blue']};
+                    border: 1px solid {COLORS['arc_blue_dim']};
+                    border-radius: 15px;
+                    font-size: 14px;
+                }}
+                QPushButton:hover {{ background: {COLORS['arc_blue_dim']}; }}
+            """)
+            voice_engine.speak("Goodbye! Say Hey Jarvis whenever you need me.", block=False)
+            self.append_message("SYSTEM", "Conversation ended. Say 'Hey Jarvis' to wake me up.", is_assistant=True)
+            self.chat_input.setPlaceholderText("Say 'Hey Jarvis' to wake me up...")
+            if self.wake_listener:
+                QTimer.singleShot(3000, self.wake_listener.resume)
+            return
+
         # Auto-send the message
-        QTimer.singleShot(500, self.send_message)
+        QTimer.singleShot(300, self.send_message)
 
     def on_voice_stopped(self):
         """Reset voice UI after listening stops"""
@@ -1548,16 +1842,45 @@ class JarvisMainWindow(QMainWindow):
                 color: white;
             }}
         """)
-        self.chat_input.setPlaceholderText("ENTER COMMAND OR QUERY... (or click 🎤 to speak)")
+        self.chat_input.setPlaceholderText("Say 'Hey Jarvis' or type here...")
         self.waveform.stop()
 
     def on_voice_error(self, error: str):
         """Handle voice recognition error"""
-        # Don't spam chat with "Didn't catch that" - just show briefly in placeholder
         if "catch" in error.lower():
-            self.chat_input.setPlaceholderText("Didn't catch that. Click 🎤 to try again.")
-            QTimer.singleShot(3000, lambda: self.chat_input.setPlaceholderText(
-                "ENTER COMMAND OR QUERY... (or click 🎤 to speak)"))
+            if self._conversation_mode:
+                # Track consecutive misses
+                if not hasattr(self, '_convo_miss_count'):
+                    self._convo_miss_count = 0
+                self._convo_miss_count += 1
+
+                if self._convo_miss_count >= 3:
+                    # Too many misses — exit conversation, go back to wake word
+                    self._convo_miss_count = 0
+                    self._conversation_mode = False
+                    self.convo_btn.setText("💬")
+                    self.convo_btn.setStyleSheet(f"""
+                        QPushButton {{
+                            background: transparent;
+                            color: {COLORS['arc_blue']};
+                            border: 1px solid {COLORS['arc_blue_dim']};
+                            border-radius: 15px;
+                            font-size: 14px;
+                        }}
+                        QPushButton:hover {{ background: {COLORS['arc_blue_dim']}; }}
+                    """)
+                    self.chat_input.setPlaceholderText("Say 'Hey Jarvis' to wake me up...")
+                    if self.wake_listener:
+                        self.wake_listener.resume()
+                else:
+                    # Keep listening
+                    QTimer.singleShot(500, self.start_voice_listening)
+            else:
+                self.chat_input.setPlaceholderText("Didn't catch that. Click 🎤 to try again.")
+                QTimer.singleShot(3000, lambda: self.chat_input.setPlaceholderText(
+                    "Say 'Hey Jarvis' to wake me up..."))
+                if self.wake_listener:
+                    self.wake_listener.resume()
         else:
             # Show actual errors in chat
             self.append_message("SYSTEM", f"Voice: {error}")
@@ -1681,6 +2004,21 @@ class JarvisMainWindow(QMainWindow):
         self.refresh_tasks()
         self.update_task_overview()
 
+    def toggle_maximize(self):
+        """Toggle between maximized and normal window state"""
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def force_quit(self):
+        """Force quit the application (Ctrl+Q)"""
+        self.health_reminder.stop()
+        if self.wake_listener:
+            self.wake_listener.stop()
+        self.tray_icon.hide()
+        QApplication.quit()
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
@@ -1690,9 +2028,18 @@ class JarvisMainWindow(QMainWindow):
             self.move(event.globalPosition().toPoint() - self.drag_pos)
 
     def closeEvent(self, event):
-        event.ignore()
-        self.hide()
-        self.tray_icon.showMessage("J.A.R.V.I.S.", "Running in background", QSystemTrayIcon.MessageIcon.Information, 2000)
+        reply = QMessageBox.question(
+            self, "J.A.R.V.I.S.",
+            "Minimize to system tray?\n\nClick 'No' to quit entirely.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            event.ignore()
+            self.hide()
+            self.tray_icon.showMessage("J.A.R.V.I.S.", "Running in background", QSystemTrayIcon.MessageIcon.Information, 2000)
+        else:
+            self.force_quit()
 
 
 class CrashHandler:

@@ -127,7 +127,7 @@ class JarvisDB:
         try:
             yield conn
         finally:
-            pass  # Keep connection in pool for thread reuse
+            self._pool.release_connection(conn)
 
     @contextmanager
     def transaction(self):

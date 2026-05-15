@@ -13,8 +13,6 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from core.logger import get_logger
 
 logger = get_logger("health")

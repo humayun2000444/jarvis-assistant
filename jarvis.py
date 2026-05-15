@@ -88,6 +88,10 @@ Examples:
                         help='Start interactive voice conversation mode')
     parser.add_argument('--talk', action='store_true',
                         help='Quick voice interaction (listen and respond once)')
+    parser.add_argument('--model', metavar='MODEL',
+                        help='Override AI model (e.g. mistral, llama3.2:1b)')
+    parser.add_argument('--list-models', action='store_true',
+                        help='List available Ollama models')
 
     # Parse known args to allow CLI subcommands
     args, remaining = parser.parse_known_args()
@@ -95,13 +99,28 @@ Examples:
     # Setup signal handlers
     setup_signal_handlers()
 
+    # Load plugins
+    try:
+        from plugins.loader import load_plugins
+        plugin_registry = load_plugins()
+        if plugin_registry.loaded_plugins:
+            print(f"Loaded plugins: {', '.join(plugin_registry.loaded_plugins)}")
+    except Exception:
+        pass  # Plugins are optional
+
     # Enable debug mode if requested
     if args.debug:
         os.environ['JARVIS_DEBUG'] = '1'
 
+    # Apply model override
+    if args.model:
+        os.environ['JARVIS_MODEL'] = args.model
+
     try:
         if args.version:
             show_version()
+        elif args.list_models:
+            list_models()
         elif args.setup:
             run_setup()
         elif args.health:
@@ -127,6 +146,16 @@ Examples:
             run_cli(remaining)
     except KeyboardInterrupt:
         graceful_shutdown()
+    except ImportError as e:
+        module = str(e).replace("No module named ", "").strip("'\"")
+        print(f"Error: Missing dependency '{module}'")
+        print(f"Install it with: pip install {module}")
+        print("Or run: pip install -r requirements.txt")
+        sys.exit(1)
+    except ConnectionError as e:
+        print(f"Connection error: {e}")
+        print("Check if Ollama is running: ollama serve")
+        sys.exit(1)
     except Exception as e:
         print(f"Error: {e}")
         if args.debug:
@@ -141,6 +170,28 @@ def show_version():
     print("Version: 1.0.0")
     print(f"Python: {sys.version}")
     print(f"Platform: {sys.platform}")
+
+
+def list_models():
+    """List available Ollama models"""
+    try:
+        import ollama
+        models = ollama.list()
+        model_list = models.get('models', [])
+        if model_list:
+            print("Available Ollama models:")
+            for model in model_list:
+                name = model.get('name', 'unknown')
+                size = model.get('size', 0)
+                size_gb = size / (1024**3) if size else 0
+                print(f"  - {name} ({size_gb:.1f} GB)")
+        else:
+            print("No models found. Pull one with: ollama pull llama3.2:1b")
+    except ImportError:
+        print("Ollama Python package not installed. Run: pip install ollama")
+    except Exception as e:
+        print(f"Could not list models: {e}")
+        print("Make sure Ollama is running: ollama serve")
 
 
 def run_setup():

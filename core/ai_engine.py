@@ -6,6 +6,7 @@ import json
 import time
 import threading
 import queue
+import hashlib
 from typing import List, Dict, Optional, Generator, Callable
 from datetime import datetime, date
 from functools import wraps
@@ -15,10 +16,6 @@ try:
     OLLAMA_AVAILABLE = True
 except ImportError:
     OLLAMA_AVAILABLE = False
-
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import AI_MODEL, AI_TEMPERATURE, PERSONALITY_PROMPT, USER_NAME, ASSISTANT_NAME
 from core.database import get_db
@@ -163,8 +160,14 @@ class ResponseBuffer:
 class JarvisAI:
     """Robust AI engine with health checks and retry logic"""
 
-    def __init__(self):
-        self.model = AI_MODEL
+    # Token budget for context (conservative estimate for small models)
+    MAX_CONTEXT_TOKENS = 2048
+    SYSTEM_PROMPT_TOKEN_BUDGET = 512
+    CHARS_PER_TOKEN = 4  # rough heuristic
+
+    def __init__(self, model: str = None):
+        import os
+        self.model = model or os.environ.get('JARVIS_MODEL') or AI_MODEL
         self._db = None
         self.context = []
         self._health_check = OllamaHealthCheck()
@@ -269,12 +272,38 @@ Remember to:
 5. Keep responses concise but friendly
 """
 
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count for text (rough heuristic: ~4 chars per token)"""
+        return max(1, len(text) // self.CHARS_PER_TOKEN)
+
+    def _trim_messages_to_budget(self, messages: List[Dict], budget_tokens: int) -> List[Dict]:
+        """Trim oldest messages to fit within token budget"""
+        if not messages:
+            return messages
+
+        total = sum(self._estimate_tokens(m.get('content', '')) for m in messages)
+        if total <= budget_tokens:
+            return messages
+
+        # Remove oldest messages until within budget
+        trimmed = list(messages)
+        while trimmed and total > budget_tokens:
+            removed = trimmed.pop(0)
+            total -= self._estimate_tokens(removed.get('content', ''))
+
+        return trimmed
+
     def _get_cache_key(self, message: str) -> str:
-        """Generate cache key for message"""
-        return hash(message)
+        """Generate deterministic cache key for message"""
+        return hashlib.sha256(message.encode()).hexdigest()
 
     def _handle_direct_queries(self, message: str) -> Optional[str]:
         """Handle queries that should be answered directly without AI"""
+        # App launch commands - check before anything else
+        app_result = self._handle_app_launch(message)
+        if app_result:
+            return app_result
+
         # Weather queries - always handle directly for real-time data
         if any(word in message for word in ['weather', 'temperature', 'forecast']):
             return self._get_weather_response(message)
@@ -284,6 +313,38 @@ Remember to:
             return f"The current time is {datetime.now().strftime('%H:%M on %A, %B %d, %Y')}"
 
         # Return None to let Ollama handle other queries
+        return None
+
+    def _handle_app_launch(self, message: str) -> Optional[str]:
+        """Detect and execute app launch commands from natural language"""
+        launch_triggers = ['open', 'start', 'launch', 'run', 'execute', 'show me', 'bring up']
+
+        message_lower = message.lower().strip()
+        has_trigger = any(trigger in message_lower for trigger in launch_triggers)
+
+        if not has_trigger:
+            return None
+
+        try:
+            from core.features import QuickCommands
+
+            # Try predefined commands first
+            cmd_name = QuickCommands.resolve_app_command(message_lower)
+            if cmd_name:
+                success = QuickCommands.execute(cmd_name)
+                app_desc = QuickCommands.COMMANDS[cmd_name]['description']
+                if success:
+                    return f"Done! {app_desc}."
+                else:
+                    return f"I tried to {app_desc.lower()}, but it didn't work."
+
+            # Fall back to arbitrary app launch — find any installed app
+            success, msg = QuickCommands.launch_arbitrary_app(message_lower)
+            return msg
+
+        except Exception as e:
+            logger.error(f"App launch error: {e}")
+
         return None
 
     @log_exceptions("ai_engine")
@@ -311,10 +372,12 @@ Remember to:
         reply = self._handle_direct_queries(message_lower)
 
         if reply is None:
-            # Get recent conversation history
+            # Get recent conversation history with token-aware trimming
             try:
-                recent = self.db.get_recent_messages(10)
+                recent = self.db.get_recent_messages(20)
                 messages = [{"role": m["role"], "content": m["content"]} for m in recent]
+                context_budget = self.MAX_CONTEXT_TOKENS - self.SYSTEM_PROMPT_TOKEN_BUDGET
+                messages = self._trim_messages_to_budget(messages, context_budget)
             except Exception as e:
                 logger.warning(f"Failed to get recent messages: {e}")
                 messages = []
@@ -396,9 +459,22 @@ Remember to:
         except Exception as e:
             logger.warning(f"Failed to save user message: {e}")
 
+        # Handle direct queries (app launch, weather, time) before Ollama
+        message_lower = message.lower().strip()
+        direct_reply = self._handle_direct_queries(message_lower)
+        if direct_reply:
+            try:
+                self.db.add_message("assistant", direct_reply)
+            except Exception as e:
+                logger.warning(f"Failed to save assistant message: {e}")
+            yield direct_reply
+            return
+
         try:
-            recent = self.db.get_recent_messages(10)
+            recent = self.db.get_recent_messages(20)
             messages = [{"role": m["role"], "content": m["content"]} for m in recent]
+            context_budget = self.MAX_CONTEXT_TOKENS - self.SYSTEM_PROMPT_TOKEN_BUDGET
+            messages = self._trim_messages_to_budget(messages, context_budget)
         except Exception as e:
             logger.warning(f"Failed to get recent messages: {e}")
             messages = []
@@ -554,14 +630,14 @@ Weather: {weather_status}"""
         message_lower = message.lower()
         if any(word in message_lower for word in ['task', 'todo', 'remind']):
             return "task_management"
+        elif any(word in message_lower for word in ['weather', 'temperature', 'forecast']):
+            return "weather_query"
         elif any(word in message_lower for word in ['log', 'activity', 'work']):
             return "activity_logging"
         elif any(word in message_lower for word in ['summary', 'report', 'stats']):
             return "reporting"
         elif any(word in message_lower for word in ['help', 'how', 'what']):
             return "help_query"
-        elif any(word in message_lower for word in ['weather', 'temperature', 'forecast']):
-            return "weather_query"
         return "general"
 
     def _get_weather_response(self, message: str) -> str:
@@ -581,20 +657,46 @@ Weather: {weather_status}"""
             logger.error(f"Weather service error: {e}")
             return f"I couldn't fetch the weather information: {str(e)}"
 
+    # Known multi-word cities for better extraction
+    _KNOWN_CITIES = {
+        'new york', 'new york city', 'los angeles', 'san francisco',
+        'las vegas', 'hong kong', 'kuala lumpur', 'buenos aires',
+        'rio de janeiro', 'sao paulo', 'mexico city', 'cape town',
+        'tel aviv', 'abu dhabi', 'sri lanka', 'costa rica',
+        'el paso', 'salt lake city', 'kansas city', 'oklahoma city',
+        'san diego', 'san antonio', 'st louis', 'st petersburg',
+    }
+
     def _extract_location(self, message: str) -> str:
         """Extract location from user message"""
-        # Common patterns for location extraction
-        location_keywords = ['in', 'for', 'at', 'weather']
-        words = message.lower().split()
+        message_lower = message.lower().strip()
+
+        # Check for known multi-word cities first
+        for city in self._KNOWN_CITIES:
+            if city in message_lower:
+                return city
+
+        # Noise words to strip from location
+        noise_words = {'today', 'tomorrow', 'now', 'please', 'the', 'like',
+                       'right', 'currently', 'outside', 'there', 'is', 'it',
+                       "what's", "what", "how", "tell", "me', 'about", 'show'}
+
+        # Keywords that precede a location
+        location_keywords = ['in', 'for', 'at', 'near']
+        words = message_lower.split()
 
         # Try to find location after keywords
         for i, word in enumerate(words):
             if word in location_keywords and i + 1 < len(words):
                 # Get remaining words as potential location
-                potential_location = ' '.join(words[i + 1:])
-                # Clean up common words
-                for remove in ['today', 'tomorrow', 'now', 'please', '?', 'the']:
-                    potential_location = potential_location.replace(remove, '').strip()
+                remaining = words[i + 1:]
+                # Strip noise words from end
+                while remaining and remaining[-1].rstrip('?.,!') in noise_words:
+                    remaining.pop()
+                # Strip noise words from start
+                while remaining and remaining[0] in noise_words:
+                    remaining.pop(0)
+                potential_location = ' '.join(remaining).strip('?.,! ')
                 if potential_location:
                     return potential_location
 

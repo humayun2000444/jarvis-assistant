@@ -1,26 +1,45 @@
 # JARVIS - Personal AI Assistant
 
-A robust, Iron Man-inspired personal AI assistant with wake word activation, voice conversation, GUI and CLI interfaces. JARVIS helps you manage tasks, launch apps, track daily activities, and provides intelligent suggestions based on your behavior patterns.
+A robust, Iron Man-inspired personal AI assistant with wake word activation, two-way voice conversation, and 30+ smart features. Built with Python, Ollama, and PyQt6.
+
+Say **"Hey Jarvis"** and start talking — it listens, responds, launches apps, searches the web, sets reminders, controls music, manages files, takes notes, and much more.
 
 ## Features
 
+### Core
 - **"Hey Jarvis" Wake Word** - Always listening, activates hands-free
 - **Voice Conversation** - Natural two-way voice conversation with speak-back
-- **App Launcher** - Open any installed app by voice or text ("open Chrome", "launch VS Code")
+- **App Launcher** - Open any installed app by voice ("open Chrome", "launch VS Code")
+- **Local AI** - Privacy-focused, runs entirely on your machine via Ollama
+- **Multi-Model Support** - Switch between Ollama models with `--model` flag
+
+### Smart Features
+- **Web Search** - "Search for Python tutorials" — real-time DuckDuckGo search with AI answers
+- **Screen Awareness** - "What's on my screen?" — OCR reads text from your screen
+- **Clipboard** - "What did I copy?" — read and manage clipboard contents
+- **Reminders & Alarms** - "Remind me in 30 minutes to call mom" — timed audio alerts
+- **Music Control** - "Play music", "Next song", "What's playing?" — controls Spotify/VLC via MPRIS
+- **File Search** - "Find my resume", "Show downloads" — search files across your system
+- **Note Taking** - "Take a note: meeting at 4pm" — voice notes stored in database
+- **Persistent Memory** - "Remember that my birthday is March 5" / "What's my birthday?" — remembers facts forever
+- **System Control** - "System info", "Kill Chrome", "Battery status", "Brightness 50"
+- **Daily Briefing** - "Brief me" — weather + tasks + reminders + system status + quote
+- **Automation Workflows** - "Goodnight" (locks + mutes), "Work mode" (opens Chrome + VS Code + Terminal)
+
+### Productivity
 - **Task Management** - Add, complete, and track tasks with priorities and due dates
 - **Activity Logging** - Log daily work activities with duration tracking
 - **Daily Summaries** - Automatic end-of-day productivity summaries
-- **Pattern Learning** - Learns from your daily routine and provides suggestions
-- **Neural Voice Output** - Human-like text-to-speech with British accent
-- **Weather Updates** - Real-time weather information for any location
-- **Desktop Notifications** - System notifications for reminders
+- **Pattern Learning** - Learns from your routine and provides suggestions
 - **Pomodoro Timer** - Built-in focus timer with breaks
 - **Health Reminders** - Water, posture, eye strain, and stretch reminders
-- **System Monitoring** - Real-time CPU, RAM, Disk, and Battery status
-- **Local AI** - Uses Ollama for privacy-focused local AI processing
-- **Multi-Model Support** - Switch between Ollama models with `--model` flag
+
+### Interface
+- **Iron Man GUI** - Animated Arc Reactor, dark HUD theme, system monitoring panels
+- **CLI Mode** - Rich interactive terminal with 20+ slash commands
+- **Background Daemon** - Scheduled tasks, reminders, and notifications
 - **Plugin System** - Extend JARVIS with custom plugins
-- **YAML Config** - User-customizable settings via `data/user_config.yaml`
+- **YAML Config** - User-customizable settings
 
 ## Screenshots
 
@@ -60,13 +79,26 @@ curl -fsSL https://ollama.ai/install.sh | sh
 ollama pull llama3.2:1b
 ```
 
+### Optional dependencies for full features
+```bash
+# Screen OCR
+sudo apt install tesseract-ocr
+
+# Clipboard
+sudo apt install xclip
+
+# Music control
+sudo apt install playerctl
+
+# Window detection
+sudo apt install xdotool
+```
+
 ## Usage
 
 ### GUI Mode (Iron Man Style Interface)
 ```bash
 jarvis --gui
-# or
-jarvis -g
 ```
 
 ### CLI Mode (Interactive Terminal)
@@ -74,12 +106,7 @@ jarvis -g
 jarvis
 ```
 
-### Background Daemon
-```bash
-jarvis --daemon
-```
-
-### Voice Mode (Terminal-based Conversation)
+### Voice Mode (Terminal-based)
 ```bash
 jarvis --voice       # Start continuous voice conversation
 jarvis --talk        # Quick voice interaction (speak once)
@@ -100,46 +127,76 @@ jarvis --diagnose    # Run full diagnostics
 jarvis --setup       # Run initial setup
 ```
 
-### Voice Commands (GUI)
+## Voice Commands
 
-JARVIS listens for the wake word **"Hey Jarvis"** at all times. Once activated:
+Say **"Hey Jarvis"** to wake up, then speak naturally:
 
-| Voice Command | Action |
-|--------------|--------|
-| "Hey Jarvis" | Wake up and start listening |
-| "Hey Jarvis, open Chrome" | Wake up and execute immediately |
-| "open terminal" | Launch terminal |
-| "start VS Code" | Launch Visual Studio Code |
-| "open file manager" | Launch Nautilus |
-| "what's the weather" | Get current weather |
-| "what time is it" | Get current time |
-| "volume up/down" | Adjust system volume |
-| "take screenshot" | Capture screen |
-| "lock screen" | Lock the screen |
-| "goodbye" / "stop listening" | End conversation mode |
+| Category | Voice Command | Action |
+|----------|--------------|--------|
+| **Apps** | "Open Chrome" | Launches Google Chrome |
+| **Apps** | "Start VS Code" | Launches Visual Studio Code |
+| **Apps** | "Open terminal" | Opens terminal |
+| **Search** | "Search for machine learning" | Web search with results |
+| **Search** | "What is Docker?" | Instant answer |
+| **Reminders** | "Remind me in 30 minutes to stretch" | Timed alarm |
+| **Reminders** | "Remind me at 3pm to check email" | Alarm at specific time |
+| **Music** | "Play music" / "Pause" | Media playback control |
+| **Music** | "Next song" / "Previous song" | Track navigation |
+| **Music** | "What's playing?" | Shows current track |
+| **Files** | "Find my resume" | Searches your files |
+| **Files** | "Show downloads" | Lists recent downloads |
+| **Files** | "Disk usage" | Shows storage info |
+| **Notes** | "Take a note: buy groceries" | Saves a note |
+| **Notes** | "Show my notes" | Lists notes |
+| **Notes** | "Search notes for meeting" | Searches notes |
+| **Memory** | "Remember my favorite color is blue" | Stores fact |
+| **Memory** | "What's my favorite color?" | Recalls fact |
+| **Memory** | "Forget my favorite color" | Deletes fact |
+| **System** | "System info" | CPU, RAM, disk, processes |
+| **System** | "Battery status" | Battery level |
+| **System** | "Kill process firefox" | Force kills app |
+| **System** | "Brightness 70" | Sets brightness |
+| **System** | "What's my IP?" | Shows IP address |
+| **Screen** | "What's on my screen?" | OCR reads screen |
+| **Clipboard** | "What did I copy?" | Shows clipboard |
+| **Briefing** | "Daily briefing" | Full status report |
+| **Workflows** | "Goodnight" | Mutes + locks screen |
+| **Workflows** | "Work mode" | Opens Chrome + VS Code + Terminal |
+| **Workflows** | "Break time" | Break notification |
+| **Weather** | "What's the weather?" | Current weather |
+| **Tasks** | "Show my tasks" | Lists pending tasks |
+| **Convo** | "Goodbye" | Ends conversation mode |
 
-JARVIS can launch **any installed application** — not just the ones listed above. It searches system binaries and .desktop files automatically.
+## CLI Commands
 
-### CLI Commands
 ```bash
-# Task management
+# Tasks
 /tasks              # List pending tasks
 /add <task>         # Add a new task
 /done <id>          # Complete a task
 
-# Activity logging
+# Activity
 /log <activity>     # Log an activity
 /today              # Show today's activities
 
-# Reports
-/summary            # Generate daily summary
-/stats              # Show productivity stats
-/suggest            # Get behavior suggestions
+# Smart Features
+/search <query>     # Search the web
+/note <text>        # Save a note
+/notes              # List notes
+/remind <text>      # Set a reminder
+/reminders          # List reminders
+/music [cmd]        # Music control (play/pause/next/prev/status)
+/system             # System info
+/briefing           # Daily briefing
+/remember <fact>    # Store a memory
+/recall <query>     # Recall a memory
+/workflows          # List workflows
 
-# Weather
-/weather             # Current weather (auto-detect location)
-/weather London      # Weather for specific city
-"what's the weather"  # Natural language also works
+# Reports
+/summary            # Daily summary
+/stats              # Productivity stats
+/suggest            # Behavior suggestions
+/weather [city]     # Weather info
 
 # Other
 /help               # Show all commands
@@ -148,109 +205,51 @@ exit                # Exit JARVIS
 
 ## Configuration
 
-### YAML Config File
-
-Create `data/user_config.yaml` to customize settings:
+Create `data/user_config.yaml` to customize:
 
 ```yaml
-# AI Model (Ollama)
 AI_MODEL: "llama3.2:1b"
 AI_TEMPERATURE: 0.7
-
-# User Settings
 USER_NAME: "Tony"
 ASSISTANT_NAME: "Jarvis"
-
-# Work hours
 WORK_START_HOUR: 9
 WORK_END_HOUR: 17
-
-# Reminder intervals
-REMINDER_INTERVAL_MINUTES: 30
-
-# Features
 ENABLE_VOICE: true
 ENABLE_DESKTOP_NOTIFICATIONS: true
 ```
-
-### Settings Reference
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `AI_MODEL` | `llama3.2:1b` | Ollama model to use |
-| `AI_TEMPERATURE` | `0.7` | AI response creativity (0.0-1.0) |
-| `USER_NAME` | System user | Your name |
-| `ASSISTANT_NAME` | `Jarvis` | Assistant's name |
-| `WORK_START_HOUR` | `9` | Work start hour |
-| `WORK_END_HOUR` | `17` | Work end hour |
-| `ENABLE_VOICE` | `true` | Enable voice output |
 
 ## Project Structure
 
 ```
 jarvis/
-├── jarvis.py           # Main entry point
-├── pyproject.toml      # Python project config
-├── install.sh          # Installation script
-├── requirements.txt    # Python dependencies
+├── jarvis.py              # Main entry point
+├── pyproject.toml          # Python project config
 ├── config/
-│   └── settings.py     # Configuration with YAML override support
+│   └── settings.py         # Config with YAML override
 ├── core/
-│   ├── ai_engine.py    # Ollama AI integration with token-aware context
-│   ├── database.py     # SQLite database with connection pooling
-│   ├── features.py     # System monitor, Voice engine, Pomodoro, App launcher
-│   ├── voice_assistant.py  # Voice conversation and wake word
-│   ├── weather.py      # Real-time weather service
-│   ├── scheduler.py    # Task scheduler (daemon mode)
-│   ├── health.py       # Health checks & diagnostics
-│   └── logger.py       # Logging system
+│   ├── ai_engine.py        # Ollama AI + smart feature routing
+│   ├── smart_features.py   # 10 smart feature modules
+│   ├── database.py         # SQLite with connection pooling
+│   ├── features.py         # System monitor, TTS, Pomodoro, App launcher
+│   ├── voice_assistant.py  # Voice conversation + wake word
+│   ├── weather.py          # Weather service
+│   ├── scheduler.py        # Background task scheduler
+│   ├── health.py           # Health checks & diagnostics
+│   └── logger.py           # Logging system
 ├── cli/
-│   └── main.py         # CLI interface
+│   └── main.py             # CLI with 20+ commands
 ├── gui/
-│   └── main_window.py  # PyQt6 GUI with wake word listener
+│   └── main_window.py      # PyQt6 GUI + wake word listener
 ├── plugins/
-│   ├── __init__.py
-│   └── loader.py       # Plugin discovery and loading
+│   └── loader.py           # Plugin system
 ├── tests/
-│   ├── test_database.py    # Database tests (27 tests)
-│   └── test_ai_engine.py   # AI engine tests (17 tests)
+│   ├── test_database.py    # 27 database tests
+│   └── test_ai_engine.py   # 17 AI engine tests
 └── data/
-    ├── jarvis.db       # SQLite database
-    ├── user_config.yaml # User config overrides
-    └── logs/           # Log files
-```
-
-## Plugins
-
-JARVIS supports plugins for extending functionality. Create a Python file in the `plugins/` directory:
-
-```python
-# plugins/my_plugin.py
-def register(app):
-    app['commands']['greet'] = {
-        'description': 'Say hello',
-        'handler': lambda args: print("Hello from my plugin!")
-    }
-```
-
-Plugins can register:
-- **CLI commands** — available as `/command` in interactive mode
-- **Quick commands** — available in the command palette (Ctrl+K)
-- **Scheduled jobs** — run on a timer
-
-## Health & Diagnostics
-
-```bash
-# Quick health check
-jarvis --health
-
-# Full diagnostic report
-jarvis --diagnose
-
-# Attempt repairs
-jarvis --repair database
-jarvis --repair logs
-jarvis --repair config
+    ├── jarvis.db           # SQLite database
+    ├── reminders.json      # Persistent reminders
+    ├── workflows.json      # Custom workflows
+    └── user_config.yaml    # User config
 ```
 
 ## Keyboard Shortcuts (GUI)
@@ -262,78 +261,41 @@ jarvis --repair config
 | `Ctrl+M` | Toggle voice output |
 | `Ctrl+Q` | Quit application |
 
-## Dependencies
+## Plugins
 
-### Required
-- PyQt6 - GUI framework
-- rich - CLI formatting
-- click - CLI commands
-- apscheduler - Task scheduling
+Create plugins in the `plugins/` directory:
 
-### Optional
-- ollama - Local AI
-- edge-tts - Neural text-to-speech
-- pyttsx3 - TTS fallback
-- SpeechRecognition - Voice input
-- psutil - System monitoring
-- plyer - Desktop notifications
-- pyyaml - YAML config support
+```python
+# plugins/my_plugin.py
+def register(app):
+    app['commands']['greet'] = {
+        'description': 'Say hello',
+        'handler': lambda args: print("Hello from my plugin!")
+    }
+```
 
 ## Testing
 
 ```bash
-# Run all tests
-pytest tests/ -v
-
-# Run specific test module
-pytest tests/test_database.py -v
-pytest tests/test_ai_engine.py -v
+pytest tests/ -v    # Run all 44 tests
 ```
 
-## Troubleshooting
+## Tech Stack
 
-### Ollama not working
-```bash
-# Start Ollama service
-ollama serve
-
-# Pull the model
-ollama pull llama3.2:1b
-
-# List available models
-jarvis --list-models
-```
-
-### Voice not working
-```bash
-# Install voice dependencies
-pip install SpeechRecognition edge-tts
-
-# Test voice
-python -c "from core.features import VoiceEngine; VoiceEngine().test_voice()"
-```
-
-### GUI not starting
-```bash
-# Install PyQt6
-pip install PyQt6
-
-# Check dependencies
-jarvis --setup
-```
-
-### Database issues
-```bash
-# Check database integrity
-jarvis --diagnose
-
-# Attempt repair
-jarvis --repair database
-```
+- **Python 3.8+** - Core language
+- **Ollama** - Local LLM (llama3.2, mistral, etc.)
+- **PyQt6** - GUI framework
+- **Edge TTS** - Neural text-to-speech (British accent)
+- **SpeechRecognition** - Voice input
+- **SQLite** - Database with connection pooling
+- **APScheduler** - Background task scheduling
+- **DuckDuckGo** - Web search (no API key needed)
+- **Tesseract** - OCR for screen reading
+- **playerctl** - Media playback control
 
 ## License
 
-MIT License - Feel free to use and modify as needed.
+MIT License - Feel free to use and modify.
 
 ## Author
 

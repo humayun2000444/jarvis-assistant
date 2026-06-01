@@ -253,11 +253,26 @@ class JarvisDB:
                     )
                 ''')
 
+                # App usage tracking
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS app_usage (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        app_name TEXT NOT NULL,
+                        window_title TEXT,
+                        start_time TEXT NOT NULL,
+                        end_time TEXT,
+                        duration_seconds INTEGER DEFAULT 0,
+                        date TEXT NOT NULL DEFAULT (date('now'))
+                    )
+                ''')
+
                 # Create indexes for better performance
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_daily_logs_date ON daily_logs(date)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversations_timestamp ON conversations(timestamp)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_app_usage_date ON app_usage(date)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_app_usage_app_name ON app_usage(app_name)')
 
                 self._initialized = True
                 logger.info("Database tables initialized successfully")
@@ -567,6 +582,98 @@ class JarvisDB:
         with ExceptionHandler("database", reraise=False, fallback={}):
             return self._execute_with_retry(_get)
         return {}
+
+    # ============ APP USAGE METHODS ============
+
+    def log_app_switch(self, app_name: str, window_title: str = "") -> int:
+        """Log a new app usage session start"""
+        def _log():
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                now = datetime.now().isoformat()
+                cursor.execute('''
+                    INSERT INTO app_usage (app_name, window_title, start_time, date)
+                    VALUES (?, ?, ?, date('now'))
+                ''', (app_name, window_title, now))
+                return cursor.lastrowid
+        return self._execute_with_retry(_log)
+
+    def update_app_session(self, session_id: int, duration_seconds: int):
+        """Update the duration and end_time of an app session"""
+        def _update():
+            with self.transaction() as conn:
+                conn.execute('''
+                    UPDATE app_usage SET end_time = ?, duration_seconds = ?
+                    WHERE id = ?
+                ''', (datetime.now().isoformat(), duration_seconds, session_id))
+        self._execute_with_retry(_update)
+
+    def get_app_usage_today(self) -> List[Dict]:
+        """Get app usage stats for today, aggregated by app"""
+        def _get():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT app_name,
+                           COUNT(*) as sessions,
+                           SUM(duration_seconds) as total_seconds,
+                           MIN(start_time) as first_used,
+                           MAX(COALESCE(end_time, start_time)) as last_used
+                    FROM app_usage
+                    WHERE date = date('now')
+                    GROUP BY app_name
+                    ORDER BY total_seconds DESC
+                ''')
+                return [dict(row) for row in cursor.fetchall()]
+        with ExceptionHandler("database", reraise=False, fallback=[]):
+            return self._execute_with_retry(_get)
+        return []
+
+    def get_app_usage_range(self, days: int = 7) -> List[Dict]:
+        """Get app usage stats for the last N days, aggregated by app"""
+        def _get():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT app_name,
+                           COUNT(*) as sessions,
+                           SUM(duration_seconds) as total_seconds,
+                           COUNT(DISTINCT date) as days_used
+                    FROM app_usage
+                    WHERE date >= date('now', ?)
+                    GROUP BY app_name
+                    ORDER BY total_seconds DESC
+                ''', (f'-{days} days',))
+                return [dict(row) for row in cursor.fetchall()]
+        with ExceptionHandler("database", reraise=False, fallback=[]):
+            return self._execute_with_retry(_get)
+        return []
+
+    def get_app_usage_timeline(self, target_date: str = None) -> List[Dict]:
+        """Get detailed app usage timeline for a specific date"""
+        def _get():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                date_filter = target_date or datetime.now().strftime('%Y-%m-%d')
+                cursor.execute('''
+                    SELECT app_name, window_title, start_time, end_time, duration_seconds
+                    FROM app_usage
+                    WHERE date = ?
+                    ORDER BY start_time DESC
+                ''', (date_filter,))
+                return [dict(row) for row in cursor.fetchall()]
+        with ExceptionHandler("database", reraise=False, fallback=[]):
+            return self._execute_with_retry(_get)
+        return []
+
+    def cleanup_app_usage(self, keep_days: int = 30):
+        """Clean up old app usage records"""
+        def _cleanup():
+            with self.transaction() as conn:
+                conn.execute('''
+                    DELETE FROM app_usage WHERE date < date('now', ?)
+                ''', (f'-{keep_days} days',))
+        self._execute_with_retry(_cleanup)
 
     # ============ STATS METHODS ============
     def get_productivity_stats(self, days: int = 7) -> Dict:

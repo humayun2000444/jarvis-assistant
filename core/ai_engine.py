@@ -545,6 +545,32 @@ Remember to:
                             return get_startup_manager().remove_app(app)
                 return "Which app should I remove from startup?"
 
+            # ---- APP USAGE ----
+            if any(p in msg for p in ['app usage', 'what apps did i use', 'apps today', 'screen time today',
+                                       'which apps', 'how long did i use', 'my usage', 'app time',
+                                       'time on apps', 'app stats']):
+                from core.features import app_usage_tracker
+                # Check for specific app query
+                if 'how long' in msg:
+                    for prefix in ['how long did i use', 'how long was i on', 'how long on']:
+                        if prefix in msg:
+                            app_query = msg.split(prefix, 1)[-1].strip().rstrip('?')
+                            if app_query:
+                                usage = self._db.get_app_usage_today()
+                                for app in usage:
+                                    if app_query.lower() in app['app_name'].lower():
+                                        secs = app['total_seconds'] or 0
+                                        h = secs // 3600
+                                        m = (secs % 3600) // 60
+                                        time_str = f"{h} hours {m} minutes" if h > 0 else f"{m} minutes"
+                                        return f"You've used {app['app_name']} for {time_str} today ({app['sessions']} sessions)."
+                                return f"No usage data found for '{app_query}' today."
+                return app_usage_tracker.get_today_summary()
+
+            if any(p in msg for p in ['top apps', 'most used apps', 'most used', 'app ranking']):
+                from core.features import app_usage_tracker
+                return app_usage_tracker.get_top_apps()
+
         except ImportError as e:
             logger.error(f"Smart features import error: {e}")
         except Exception as e:

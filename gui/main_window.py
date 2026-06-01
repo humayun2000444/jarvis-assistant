@@ -29,8 +29,9 @@ from core.database import get_db
 from core.ai_engine import get_ai
 from core.features import (
     SystemMonitor, VoiceEngine, PomodoroTimer, HealthReminder,
-    DailyMotivation, QuickCommands, ScreenTimeTracker, system_monitor,
-    voice_engine, daily_motivation, screen_time
+    DailyMotivation, QuickCommands, ScreenTimeTracker, AppUsageTracker,
+    system_monitor, voice_engine, daily_motivation, screen_time,
+    app_usage_tracker
 )
 
 # Voice Assistant for conversation
@@ -1157,6 +1158,9 @@ class JarvisMainWindow(QMainWindow):
         self.wake_listener = None
         self._start_wake_word_listener()
 
+        # Start app usage tracking
+        app_usage_tracker.start()
+
         self.drag_pos = None
 
     def setup_shortcuts(self):
@@ -1408,6 +1412,7 @@ class JarvisMainWindow(QMainWindow):
         self.tabs.addTab(self.create_activity_tab(), "◈ LOG")
         self.tabs.addTab(self.create_analysis_tab(), "◈ ANALYSIS")
         self.tabs.addTab(self.create_startup_tab(), "◈ STARTUP")
+        self.tabs.addTab(self.create_app_usage_tab(), "◈ APP USAGE")
 
         layout.addWidget(self.tabs)
 
@@ -1912,6 +1917,272 @@ class JarvisMainWindow(QMainWindow):
         # Hide progress bar after a delay
         QTimer.singleShot(5000, lambda: self.startup_progress.setVisible(False))
 
+    def create_app_usage_tab(self) -> QWidget:
+        """Create app usage tracking tab"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(15, 15, 15, 15)
+
+        # Header
+        header = QHBoxLayout()
+        header_label = QLabel("◈ APPLICATION USAGE TRACKER")
+        header_label.setStyleSheet(f"color: {COLORS['arc_blue']}; font-weight: bold; font-size: 13px;")
+        header.addWidget(header_label)
+        header.addStretch()
+
+        # Current app indicator
+        self.current_app_label = QLabel("ACTIVE: —")
+        self.current_app_label.setStyleSheet(f"color: {COLORS['success']}; font-weight: bold; font-size: 11px;")
+        header.addWidget(self.current_app_label)
+
+        refresh_btn = HUDButton("↻ REFRESH")
+        refresh_btn.clicked.connect(self.refresh_app_usage)
+        header.addWidget(refresh_btn)
+
+        layout.addLayout(header)
+
+        # Top section: usage bars + stats side by side
+        top_section = QHBoxLayout()
+
+        # Left: Usage bar chart
+        bars_frame = QFrame()
+        bars_frame.setStyleSheet(f"""
+            QFrame {{
+                background: {COLORS['bg_panel']};
+                border: 1px solid {COLORS['arc_blue_dim']};
+                border-radius: 10px;
+                padding: 10px;
+            }}
+        """)
+        bars_layout = QVBoxLayout(bars_frame)
+        bars_title = QLabel("TODAY'S TOP APPS")
+        bars_title.setStyleSheet(f"color: {COLORS['arc_blue']}; font-weight: bold; font-size: 11px;")
+        bars_layout.addWidget(bars_title)
+
+        # Container for usage bars (will be populated dynamically)
+        self.usage_bars_widget = QWidget()
+        self.usage_bars_layout = QVBoxLayout(self.usage_bars_widget)
+        self.usage_bars_layout.setSpacing(6)
+        self.usage_bars_layout.setContentsMargins(0, 5, 0, 0)
+        bars_layout.addWidget(self.usage_bars_widget)
+        bars_layout.addStretch()
+
+        top_section.addWidget(bars_frame, stretch=3)
+
+        # Right: Summary stats
+        stats_frame = QFrame()
+        stats_frame.setStyleSheet(f"""
+            QFrame {{
+                background: {COLORS['bg_panel']};
+                border: 1px solid {COLORS['arc_blue_dim']};
+                border-radius: 10px;
+                padding: 10px;
+            }}
+        """)
+        stats_layout = QVBoxLayout(stats_frame)
+        stats_title = QLabel("DAILY STATS")
+        stats_title.setStyleSheet(f"color: {COLORS['arc_blue']}; font-weight: bold; font-size: 11px;")
+        stats_layout.addWidget(stats_title)
+
+        self.usage_total_time = QLabel("0h 0m")
+        self.usage_total_time.setStyleSheet(f"color: {COLORS['arc_glow']}; font-size: 28px; font-weight: bold;")
+        self.usage_total_time.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        stats_layout.addWidget(self.usage_total_time)
+
+        total_label = QLabel("TOTAL SCREEN TIME")
+        total_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 10px;")
+        total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        stats_layout.addWidget(total_label)
+
+        # Divider
+        div = QFrame()
+        div.setFixedHeight(1)
+        div.setStyleSheet(f"background: {COLORS['border']};")
+        stats_layout.addWidget(div)
+
+        self.usage_app_count = QLabel("0")
+        self.usage_app_count.setStyleSheet(f"color: {COLORS['gold']}; font-size: 24px; font-weight: bold;")
+        self.usage_app_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        stats_layout.addWidget(self.usage_app_count)
+
+        count_label = QLabel("APPS USED")
+        count_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 10px;")
+        count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        stats_layout.addWidget(count_label)
+
+        div2 = QFrame()
+        div2.setFixedHeight(1)
+        div2.setStyleSheet(f"background: {COLORS['border']};")
+        stats_layout.addWidget(div2)
+
+        self.usage_sessions = QLabel("0")
+        self.usage_sessions.setStyleSheet(f"color: {COLORS['success']}; font-size: 24px; font-weight: bold;")
+        self.usage_sessions.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        stats_layout.addWidget(self.usage_sessions)
+
+        sessions_label = QLabel("SESSIONS")
+        sessions_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 10px;")
+        sessions_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        stats_layout.addWidget(sessions_label)
+
+        stats_layout.addStretch()
+        top_section.addWidget(stats_frame, stretch=1)
+
+        layout.addLayout(top_section)
+
+        # Bottom: Detailed timeline table
+        self.usage_table = QTableWidget()
+        self.usage_table.setColumnCount(4)
+        self.usage_table.setHorizontalHeaderLabels(["APPLICATION", "TIME USED", "SESSIONS", "LAST ACTIVE"])
+        self.usage_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {COLORS['bg_dark']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['arc_blue_dim']};
+                border-radius: 10px;
+                gridline-color: {COLORS['border']};
+            }}
+            QTableWidget::item {{ padding: 10px; }}
+            QTableWidget::item:selected {{ background-color: {COLORS['arc_blue_dim']}; }}
+            QHeaderView::section {{
+                background-color: {COLORS['bg_panel']};
+                color: {COLORS['arc_blue']};
+                padding: 10px;
+                border: none;
+                font-weight: bold;
+            }}
+        """)
+        self.usage_table.setColumnWidth(0, 250)
+        self.usage_table.setColumnWidth(1, 150)
+        self.usage_table.setColumnWidth(2, 100)
+        self.usage_table.setColumnWidth(3, 200)
+        self.usage_table.verticalHeader().setVisible(False)
+        self.usage_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+
+        layout.addWidget(self.usage_table)
+
+        self.refresh_app_usage()
+        return widget
+
+    def refresh_app_usage(self):
+        """Refresh the app usage tab with current data"""
+        usage = self.db.get_app_usage_today()
+
+        # Update current app
+        current = app_usage_tracker.get_current_app()
+        self.current_app_label.setText(f"ACTIVE: {current or '—'}")
+
+        # Update stats
+        total_seconds = sum(a['total_seconds'] or 0 for a in usage)
+        total_sessions = sum(a['sessions'] or 0 for a in usage)
+        h = total_seconds // 3600
+        m = (total_seconds % 3600) // 60
+        self.usage_total_time.setText(f"{h}h {m}m")
+        self.usage_app_count.setText(str(len(usage)))
+        self.usage_sessions.setText(str(total_sessions))
+
+        # Update bars
+        # Clear old bars
+        while self.usage_bars_layout.count():
+            child = self.usage_bars_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        # Add new bars for top 8 apps
+        max_seconds = usage[0]['total_seconds'] if usage else 1
+        bar_colors = [COLORS['arc_blue'], COLORS['gold'], COLORS['success'],
+                      COLORS['purple'], COLORS['red'], COLORS['arc_glow'],
+                      COLORS['arc_blue_dim'], COLORS['gold_dim']]
+
+        for i, app in enumerate(usage[:8]):
+            secs = app['total_seconds'] or 0
+            bar_h = secs // 3600
+            bar_m = (secs % 3600) // 60
+            time_str = f"{bar_h}h {bar_m}m" if bar_h > 0 else f"{bar_m}m"
+            pct = int((secs / max(max_seconds, 1)) * 100)
+            color = bar_colors[i % len(bar_colors)]
+
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+
+            name_label = QLabel(app['app_name'])
+            name_label.setFixedWidth(120)
+            name_label.setStyleSheet(f"color: {COLORS['text']}; font-size: 11px;")
+            row_layout.addWidget(name_label)
+
+            bar = QProgressBar()
+            bar.setValue(pct)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(16)
+            bar.setStyleSheet(f"""
+                QProgressBar {{
+                    background: {COLORS['bg_dark']};
+                    border: 1px solid {COLORS['border']};
+                    border-radius: 4px;
+                }}
+                QProgressBar::chunk {{
+                    background: {color};
+                    border-radius: 3px;
+                }}
+            """)
+            row_layout.addWidget(bar, stretch=1)
+
+            time_label = QLabel(time_str)
+            time_label.setFixedWidth(60)
+            time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            time_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 11px;")
+            row_layout.addWidget(time_label)
+
+            self.usage_bars_layout.addWidget(row)
+
+        if not usage:
+            no_data = QLabel("No usage data yet. JARVIS is tracking your apps...")
+            no_data.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 11px; padding: 20px;")
+            no_data.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.usage_bars_layout.addWidget(no_data)
+
+        # Update table
+        self.usage_table.setRowCount(len(usage))
+        for row, app in enumerate(usage):
+            # App name
+            name_item = QTableWidgetItem(app['app_name'])
+            name_item.setForeground(QColor(COLORS['arc_glow']))
+            self.usage_table.setItem(row, 0, name_item)
+
+            # Time used
+            secs = app['total_seconds'] or 0
+            t_h = secs // 3600
+            t_m = (secs % 3600) // 60
+            time_str = f"{t_h}h {t_m}m" if t_h > 0 else f"{t_m}m"
+            time_item = QTableWidgetItem(time_str)
+            if secs > 7200:  # > 2 hours
+                time_item.setForeground(QColor(COLORS['red']))
+            elif secs > 3600:  # > 1 hour
+                time_item.setForeground(QColor(COLORS['gold']))
+            else:
+                time_item.setForeground(QColor(COLORS['success']))
+            self.usage_table.setItem(row, 1, time_item)
+
+            # Sessions
+            sess_item = QTableWidgetItem(str(app['sessions']))
+            sess_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.usage_table.setItem(row, 2, sess_item)
+
+            # Last active
+            last = app.get('last_used', '')
+            if last:
+                try:
+                    from datetime import datetime as dt
+                    last_dt = dt.fromisoformat(last)
+                    last_str = last_dt.strftime('%I:%M %p')
+                except Exception:
+                    last_str = last[:16] if last else "—"
+            else:
+                last_str = "—"
+            self.usage_table.setItem(row, 3, QTableWidgetItem(last_str))
+
     def setup_tray(self):
         """Setup system tray"""
         self.tray_icon = QSystemTrayIcon(self)
@@ -1939,6 +2210,20 @@ class JarvisMainWindow(QMainWindow):
         self.task_timer = QTimer()
         self.task_timer.timeout.connect(self.update_task_overview)
         self.task_timer.start(30000)
+
+        # App usage refresh
+        self.usage_timer = QTimer()
+        self.usage_timer.timeout.connect(self._auto_refresh_usage)
+        self.usage_timer.start(30000)
+
+    def _auto_refresh_usage(self):
+        """Auto-refresh app usage if that tab is visible"""
+        if hasattr(self, 'usage_table') and self.tabs.currentIndex() == 5:
+            self.refresh_app_usage()
+        # Always update current app label
+        if hasattr(self, 'current_app_label'):
+            current = app_usage_tracker.get_current_app()
+            self.current_app_label.setText(f"ACTIVE: {current or '—'}")
 
     def update_status(self):
         """Update status bar"""
@@ -2434,6 +2719,7 @@ class JarvisMainWindow(QMainWindow):
     def force_quit(self):
         """Force quit the application (Ctrl+Q)"""
         self.health_reminder.stop()
+        app_usage_tracker.stop()
         if self.wake_listener:
             self.wake_listener.stop()
         self.tray_icon.hide()

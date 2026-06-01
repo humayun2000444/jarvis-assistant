@@ -40,6 +40,13 @@ def interactive_mode():
         border_style="cyan"
     ))
 
+    # Start app usage tracking
+    try:
+        from core.features import app_usage_tracker
+        app_usage_tracker.start()
+    except Exception:
+        pass
+
     # Show welcome message
     welcome = ai.generate_welcome_message()
     console.print(f"\n[cyan]{ASSISTANT_NAME}:[/cyan] {welcome}\n")
@@ -136,6 +143,10 @@ def handle_command(cmd: str):
         cli_startup_remove(args)
     elif command in ('startup-run', 'startup_run'):
         cli_startup_run()
+    elif command == 'usage':
+        cli_app_usage()
+    elif command in ('top-apps', 'top_apps'):
+        cli_top_apps()
     else:
         # Check plugin commands
         try:
@@ -182,6 +193,8 @@ def show_help():
 | /startup-add [app] | Add app to startup list |
 | /startup-remove [app] | Remove app from startup list |
 | /startup-run | Launch all startup apps now |
+| /usage | Show today's app usage |
+| /top-apps | Show most used apps (7 days) |
 | /help | Show this help |
 | exit | Exit the assistant |
 
@@ -540,8 +553,22 @@ def cli_startup_run():
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
 
+def cli_app_usage():
+    try:
+        from core.features import app_usage_tracker
+        console.print(Panel(app_usage_tracker.get_today_summary(), title="App Usage Today", border_style="cyan"))
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+def cli_top_apps():
+    try:
+        from core.features import app_usage_tracker
+        console.print(Panel(app_usage_tracker.get_top_apps(), title="Top Apps (7 Days)", border_style="cyan"))
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
 
 
+def show_weather(location: str = ""):
     """Show weather information"""
     try:
         from core.weather import get_weather

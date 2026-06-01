@@ -24,6 +24,7 @@ Say **"Hey Jarvis"** and start talking — it listens, responds, launches apps, 
 - **Persistent Memory** - "Remember that my birthday is March 5" / "What's my birthday?" — remembers facts forever
 - **System Control** - "System info", "Kill Chrome", "Battery status", "Brightness 50"
 - **Daily Briefing** - "Brief me" — weather + tasks + reminders + system status + quote
+- **App Usage Tracking** - Tracks which apps you use, how long, daily stats and rankings
 - **Startup Apps** - Auto-launch your favorite apps on boot with voice announcements
 - **Automation Workflows** - "Goodnight" (locks + mutes), "Work mode" (opens Chrome + VS Code + Terminal)
 
@@ -169,6 +170,9 @@ Say **"Hey Jarvis"** to wake up, then speak naturally:
 | **Startup** | "Run startup apps" | Launches all startup apps |
 | **Startup** | "Add Chrome to startup" | Adds app to startup |
 | **Startup** | "Remove Chrome from startup" | Removes from startup |
+| **Usage** | "What apps did I use today?" | Shows app usage |
+| **Usage** | "How long did I use Chrome?" | Time on specific app |
+| **Usage** | "Top apps" | Most used apps ranking |
 | **Weather** | "What's the weather?" | Current weather |
 | **Tasks** | "Show my tasks" | Lists pending tasks |
 | **Convo** | "Goodbye" | Ends conversation mode |
@@ -201,6 +205,8 @@ Say **"Hey Jarvis"** to wake up, then speak naturally:
 /startup-add <app>  # Add app to startup list
 /startup-remove <app> # Remove app from startup
 /startup-run        # Launch all startup apps
+/usage              # Today's app usage stats
+/top-apps           # Most used apps (7 days)
 
 # Reports
 /summary            # Daily summary

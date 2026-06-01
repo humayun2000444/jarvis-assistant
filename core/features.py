@@ -8,6 +8,7 @@ JARVIS Advanced Features Module
 - Ambient Sounds
 - Quick Commands
 - Daily Motivation
+- App Usage Tracking
 """
 import os
 import sys
@@ -886,9 +887,210 @@ class ScreenTimeTracker:
         return max(0, min(100, int(score)))
 
 
+class AppUsageTracker:
+    """Track which applications the user is actively using via active window polling"""
+
+    def __init__(self):
+        self._running = False
+        self._thread = None
+        self._current_app = None
+        self._current_title = None
+        self._current_session_id = None
+        self._session_start = None
+        self._lock = threading.Lock()
+        self._poll_interval = 5  # seconds
+
+        # Check if xdotool is available
+        self._xdotool_available = self._check_xdotool()
+
+    def _check_xdotool(self) -> bool:
+        try:
+            subprocess.run(['xdotool', '--version'], capture_output=True, timeout=3)
+            return True
+        except Exception:
+            return False
+
+    def start(self):
+        """Start tracking in background"""
+        if self._running or not self._xdotool_available:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        """Stop tracking"""
+        self._running = False
+        self._finalize_current_session()
+
+    def _poll_loop(self):
+        """Main polling loop — checks active window every N seconds"""
+        from core.database import get_db
+
+        while self._running:
+            try:
+                app_name, window_title = self._get_active_window()
+                if app_name:
+                    with self._lock:
+                        if app_name != self._current_app:
+                            # App switched — finalize old session, start new one
+                            self._finalize_current_session()
+                            db = get_db()
+                            self._current_session_id = db.log_app_switch(app_name, window_title)
+                            self._current_app = app_name
+                            self._current_title = window_title
+                            self._session_start = time.time()
+                        else:
+                            # Same app — update duration
+                            if self._current_session_id and self._session_start:
+                                duration = int(time.time() - self._session_start)
+                                db = get_db()
+                                db.update_app_session(self._current_session_id, duration)
+            except Exception:
+                pass
+
+            time.sleep(self._poll_interval)
+
+    def _finalize_current_session(self):
+        """Save final duration of current session"""
+        if self._current_session_id and self._session_start:
+            try:
+                duration = int(time.time() - self._session_start)
+                from core.database import get_db
+                get_db().update_app_session(self._current_session_id, duration)
+            except Exception:
+                pass
+        self._current_session_id = None
+        self._current_app = None
+        self._session_start = None
+
+    def _get_active_window(self) -> tuple:
+        """Get the currently active window's app name and title"""
+        try:
+            # Get active window ID
+            result = subprocess.run(
+                ['xdotool', 'getactivewindow'],
+                capture_output=True, text=True, timeout=3
+            )
+            if result.returncode != 0:
+                return None, None
+
+            window_id = result.stdout.strip()
+
+            # Get window name
+            result = subprocess.run(
+                ['xdotool', 'getactivewindow', 'getwindowname'],
+                capture_output=True, text=True, timeout=3
+            )
+            window_title = result.stdout.strip() if result.returncode == 0 else ""
+
+            # Get WM_CLASS (app identifier)
+            result = subprocess.run(
+                ['xprop', '-id', window_id, 'WM_CLASS'],
+                capture_output=True, text=True, timeout=3
+            )
+            if result.returncode == 0 and '=' in result.stdout:
+                # WM_CLASS format: WM_CLASS(STRING) = "instance", "Class"
+                parts = result.stdout.split('=', 1)[1].strip()
+                classes = [c.strip().strip('"') for c in parts.split(',')]
+                app_name = classes[-1] if classes else "Unknown"
+            else:
+                # Fallback: derive app name from window title
+                app_name = window_title.split(' - ')[-1].strip() if window_title else "Unknown"
+
+            # Clean up common app names
+            app_name = self._clean_app_name(app_name)
+            return app_name, window_title
+
+        except Exception:
+            return None, None
+
+    def _clean_app_name(self, name: str) -> str:
+        """Normalize app names for consistent tracking"""
+        name_map = {
+            'Google-chrome': 'Chrome',
+            'google-chrome': 'Chrome',
+            'Google-chrome-stable': 'Chrome',
+            'firefox': 'Firefox',
+            'Firefox': 'Firefox',
+            'Navigator': 'Firefox',
+            'Code': 'VS Code',
+            'code': 'VS Code',
+            'Gnome-terminal': 'Terminal',
+            'gnome-terminal': 'Terminal',
+            'org.gnome.Terminal': 'Terminal',
+            'Nautilus': 'Files',
+            'org.gnome.Nautilus': 'Files',
+            'Spotify': 'Spotify',
+            'spotify': 'Spotify',
+            'discord': 'Discord',
+            'Discord': 'Discord',
+            'Slack': 'Slack',
+            'slack': 'Slack',
+            'Telegram': 'Telegram',
+            'telegram-desktop': 'Telegram',
+            'Thunderbird': 'Thunderbird',
+            'Gedit': 'Text Editor',
+            'org.gnome.gedit': 'Text Editor',
+            'Evince': 'Document Viewer',
+            'Eog': 'Image Viewer',
+            'Totem': 'Videos',
+            'vlc': 'VLC',
+            'obs': 'OBS',
+            'Gimp-2.10': 'GIMP',
+            'libreoffice': 'LibreOffice',
+        }
+        return name_map.get(name, name)
+
+    def get_current_app(self) -> Optional[str]:
+        """Get the app currently being tracked"""
+        with self._lock:
+            return self._current_app
+
+    def get_today_summary(self) -> str:
+        """Get a formatted summary of today's app usage"""
+        from core.database import get_db
+        usage = get_db().get_app_usage_today()
+        if not usage:
+            return "No app usage tracked today yet."
+
+        lines = ["Today's App Usage:\n"]
+        total_seconds = 0
+        for app in usage:
+            secs = app['total_seconds'] or 0
+            total_seconds += secs
+            h = secs // 3600
+            m = (secs % 3600) // 60
+            time_str = f"{h}h {m}m" if h > 0 else f"{m}m"
+            sessions = app['sessions']
+            lines.append(f"  {app['app_name']:20s}  {time_str:>8s}  ({sessions} session{'s' if sessions != 1 else ''})")
+
+        total_h = total_seconds // 3600
+        total_m = (total_seconds % 3600) // 60
+        lines.append(f"\n  {'TOTAL':20s}  {total_h}h {total_m}m")
+        return "\n".join(lines)
+
+    def get_top_apps(self, days: int = 7) -> str:
+        """Get top used apps over N days"""
+        from core.database import get_db
+        usage = get_db().get_app_usage_range(days)
+        if not usage:
+            return f"No app usage data for the last {days} days."
+
+        lines = [f"Top Apps (Last {days} Days):\n"]
+        for i, app in enumerate(usage[:10], 1):
+            secs = app['total_seconds'] or 0
+            h = secs // 3600
+            m = (secs % 3600) // 60
+            time_str = f"{h}h {m}m" if h > 0 else f"{m}m"
+            lines.append(f"  {i:2d}. {app['app_name']:20s}  {time_str:>8s}  ({app['days_used']}d)")
+        return "\n".join(lines)
+
+
 # Initialize global instances
 system_monitor = SystemMonitor()
 voice_engine = VoiceEngine()
 daily_motivation = DailyMotivation()
 quick_commands = QuickCommands()
 screen_time = ScreenTimeTracker()
+app_usage_tracker = AppUsageTracker()

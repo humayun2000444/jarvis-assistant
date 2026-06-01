@@ -92,6 +92,8 @@ Examples:
                         help='Override AI model (e.g. mistral, llama3.2:1b)')
     parser.add_argument('--list-models', action='store_true',
                         help='List available Ollama models')
+    parser.add_argument('--startup', action='store_true',
+                        help='Launch all startup apps with voice announcements')
 
     # Parse known args to allow CLI subcommands
     args, remaining = parser.parse_known_args()
@@ -129,6 +131,8 @@ Examples:
             run_diagnostics()
         elif args.repair:
             run_repair(args.repair)
+        elif args.startup:
+            run_startup_apps()
         elif args.voice:
             run_voice_mode()
         elif args.talk:
@@ -306,7 +310,37 @@ def run_setup():
     print("=" * 50)
 
 
-def run_voice_mode():
+def run_startup_apps():
+    """Launch all startup apps with JARVIS voice announcements"""
+    try:
+        from core.smart_features import get_startup_manager
+        from core.features import VoiceEngine
+
+        startup = get_startup_manager()
+        apps = startup.get_apps()
+
+        if not apps:
+            print("No startup apps configured.")
+            print("Add apps with: jarvis then /startup-add <app name>")
+            return
+
+        # Initialize voice engine for announcements
+        voice = VoiceEngine()
+
+        def speak_and_wait(text):
+            """Speak and wait for completion"""
+            print(f"  JARVIS: {text}")
+            voice.speak(text, block=True)
+
+        print(f"\nJARVIS Startup — Launching {len(apps)} app(s)...\n")
+        result = startup.run_startup(speak_func=speak_and_wait)
+        print(f"\n{result}")
+
+    except Exception as e:
+        print(f"Startup error: {e}")
+
+
+
     """Start interactive voice conversation mode"""
     try:
         from core.voice_assistant import start_voice_mode

@@ -728,6 +728,68 @@ class WakeWordListenerThread(QThread):
         self._paused = False
 
 
+class StartupWorker(QThread):
+    """Worker thread to launch startup apps with voice announcements"""
+    app_launching = pyqtSignal(str, int, int)  # app_name, current, total
+    app_launched = pyqtSignal(str, bool, str)  # app_name, success, message
+    all_done = pyqtSignal(str)                 # summary message
+
+    def __init__(self, apps):
+        super().__init__()
+        self.apps = apps
+
+    def run(self):
+        import shutil
+        total = len(self.apps)
+
+        # Speak intro
+        voice_engine.speak(f"Good day! Starting your {total} startup application{'s' if total > 1 else ''}.", block=True)
+
+        results = []
+        for i, app in enumerate(self.apps, 1):
+            name = app['name']
+            command = app['command']
+
+            self.app_launching.emit(name, i, total)
+            voice_engine.speak(f"Opening {name}. Application {i} of {total}.", block=True)
+
+            # Try to launch
+            import subprocess
+            binary_path = shutil.which(command)
+            if binary_path:
+                try:
+                    subprocess.Popen([binary_path], stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL, start_new_session=True)
+                    self.app_launched.emit(name, True, "Launched successfully")
+                    results.append(True)
+                except Exception as e:
+                    self.app_launched.emit(name, False, str(e))
+                    voice_engine.speak(f"Sorry, I couldn't open {name}.", block=True)
+                    results.append(False)
+            else:
+                # Fallback to QuickCommands
+                try:
+                    success, msg = QuickCommands.launch_arbitrary_app(f"open {name}")
+                    self.app_launched.emit(name, success, msg)
+                    if not success:
+                        voice_engine.speak(f"Sorry, I couldn't open {name}.", block=True)
+                    results.append(success)
+                except Exception as e:
+                    self.app_launched.emit(name, False, str(e))
+                    results.append(False)
+
+            self.msleep(1500)
+
+        ok = sum(results)
+        fail = total - ok
+        if fail == 0:
+            summary = f"All {total} applications are now running. You're all set!"
+        else:
+            summary = f"Launched {ok} of {total} applications. {fail} failed to start."
+        voice_engine.speak(summary, block=True)
+        self.all_done.emit(summary)
+
+
 class CommandPalette(QDialog):
     """Quick command palette (Ctrl+K)"""
 
@@ -927,6 +989,139 @@ class AddTaskDialog(QDialog):
             'due_date': self.due_date_edit.date().toString("yyyy-MM-dd"),
             'category': self.category_edit.text() or None,
         }
+
+
+class StartupAddDialog(QDialog):
+    """Dialog to select an app from installed applications or type custom"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("// ADD STARTUP APP")
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(400)
+        self.setModal(True)
+        self._installed_apps = []
+        self.setup_ui()
+        self._load_apps()
+
+    def setup_ui(self):
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {COLORS['bg_dark']};
+                border: 2px solid {COLORS['arc_blue_dim']};
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel("◈ ADD STARTUP APP")
+        title.setStyleSheet(f"color: {COLORS['arc_blue']}; font-size: 16px; font-weight: bold;")
+        layout.addWidget(title)
+
+        # Search/filter input
+        search_label = QLabel("SEARCH INSTALLED APPS:")
+        search_label.setStyleSheet(f"color: {COLORS['arc_blue']}; font-weight: bold; font-size: 11px;")
+        layout.addWidget(search_label)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Type to filter apps...")
+        self.search_input.textChanged.connect(self._filter_apps)
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {COLORS['bg_panel']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['arc_blue_dim']};
+                border-radius: 5px;
+                padding: 10px;
+                font-size: 13px;
+            }}
+        """)
+        layout.addWidget(self.search_input)
+
+        # App list table
+        self.app_list = QTableWidget()
+        self.app_list.setColumnCount(2)
+        self.app_list.setHorizontalHeaderLabels(["APPLICATION", "COMMAND"])
+        self.app_list.horizontalHeader().setStretchLastSection(True)
+        self.app_list.setColumnWidth(0, 220)
+        self.app_list.verticalHeader().setVisible(False)
+        self.app_list.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.app_list.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.app_list.itemDoubleClicked.connect(self.accept)
+        self.app_list.setStyleSheet(f"""
+            QTableWidget {{
+                background: {COLORS['bg_panel']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['arc_blue_dim']};
+                border-radius: 8px;
+            }}
+            QTableWidget::item {{
+                padding: 8px;
+            }}
+            QTableWidget::item:selected {{
+                background: {COLORS['arc_blue_dim']};
+            }}
+            QHeaderView::section {{
+                background: {COLORS['bg_dark']};
+                color: {COLORS['arc_blue']};
+                padding: 8px;
+                border: none;
+                font-weight: bold;
+            }}
+        """)
+        layout.addWidget(self.app_list)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        self.add_btn = HUDButton("ADD SELECTED")
+        self.add_btn.clicked.connect(self.accept)
+        self.cancel_btn = HUDButton("CANCEL")
+        self.cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(self.add_btn)
+        btn_layout.addWidget(self.cancel_btn)
+        layout.addLayout(btn_layout)
+
+    def _load_apps(self):
+        """Load installed apps from system"""
+        try:
+            from core.smart_features import get_startup_manager
+            self._installed_apps = get_startup_manager().discover_installed_apps()
+        except Exception:
+            self._installed_apps = []
+        self._populate_table(self._installed_apps)
+
+    def _filter_apps(self, text):
+        """Filter app list based on search text"""
+        text_lower = text.lower()
+        if not text_lower:
+            filtered = self._installed_apps
+        else:
+            filtered = [a for a in self._installed_apps if text_lower in a['name'].lower()]
+        self._populate_table(filtered)
+
+    def _populate_table(self, apps):
+        """Fill the table with app entries"""
+        self.app_list.setRowCount(len(apps))
+        for i, app in enumerate(apps):
+            name_item = QTableWidgetItem(app['name'])
+            name_item.setForeground(QColor(COLORS['arc_glow']))
+            self.app_list.setItem(i, 0, name_item)
+            self.app_list.setItem(i, 1, QTableWidgetItem(app['command']))
+
+    def get_selected_app(self) -> tuple:
+        """Returns (name, command) of the selected app"""
+        row = self.app_list.currentRow()
+        if row >= 0:
+            name = self.app_list.item(row, 0).text()
+            command = self.app_list.item(row, 1).text()
+            return name, command
+        # Fallback: use search text as custom app name
+        text = self.search_input.text().strip()
+        if text:
+            return text, ""
+        return "", ""
 
 
 class JarvisMainWindow(QMainWindow):
@@ -1212,6 +1407,7 @@ class JarvisMainWindow(QMainWindow):
         self.tabs.addTab(self.create_tasks_tab(), "◈ MISSIONS")
         self.tabs.addTab(self.create_activity_tab(), "◈ LOG")
         self.tabs.addTab(self.create_analysis_tab(), "◈ ANALYSIS")
+        self.tabs.addTab(self.create_startup_tab(), "◈ STARTUP")
 
         layout.addWidget(self.tabs)
 
@@ -1246,6 +1442,7 @@ class JarvisMainWindow(QMainWindow):
             ("+ LOG ACTIVITY", self.show_log_activity_dialog),
             ("📊 SUMMARY", self.generate_summary),
             ("🔊 SPEAK", self.speak_last_message),
+            ("▶ STARTUP APPS", self.startup_launch_all),
         ]:
             btn = HUDButton(text)
             btn.clicked.connect(callback)
@@ -1491,6 +1688,229 @@ class JarvisMainWindow(QMainWindow):
         self.refresh_stats()
 
         return widget
+
+    def create_startup_tab(self) -> QWidget:
+        """Create startup apps management tab"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(15, 15, 15, 15)
+
+        # Header with buttons
+        header = QHBoxLayout()
+        header_label = QLabel("◈ STARTUP APPLICATIONS")
+        header_label.setStyleSheet(f"color: {COLORS['arc_blue']}; font-weight: bold; font-size: 13px;")
+        header.addWidget(header_label)
+        header.addStretch()
+
+        add_btn = HUDButton("+ ADD APP")
+        add_btn.clicked.connect(self.startup_add_app)
+        header.addWidget(add_btn)
+
+        remove_btn = HUDButton("- REMOVE")
+        remove_btn.clicked.connect(self.startup_remove_app)
+        header.addWidget(remove_btn)
+
+        launch_btn = HUDButton("▶ LAUNCH ALL")
+        launch_btn.setStyleSheet(launch_btn.styleSheet().replace(COLORS['arc_blue'], COLORS['success']).replace(COLORS['arc_blue_dim'], '#006644'))
+        launch_btn.clicked.connect(self.startup_launch_all)
+        header.addWidget(launch_btn)
+
+        layout.addLayout(header)
+
+        # Startup apps table
+        self.startup_table = QTableWidget()
+        self.startup_table.setColumnCount(4)
+        self.startup_table.setHorizontalHeaderLabels(["#", "APPLICATION", "COMMAND", "STATUS"])
+        self.startup_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {COLORS['bg_dark']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['arc_blue_dim']};
+                border-radius: 10px;
+                gridline-color: {COLORS['border']};
+            }}
+            QTableWidget::item {{ padding: 10px; }}
+            QTableWidget::item:selected {{ background-color: {COLORS['arc_blue_dim']}; }}
+            QHeaderView::section {{
+                background-color: {COLORS['bg_panel']};
+                color: {COLORS['arc_blue']};
+                padding: 10px;
+                border: none;
+                font-weight: bold;
+            }}
+        """)
+        self.startup_table.setColumnWidth(0, 50)
+        self.startup_table.setColumnWidth(1, 250)
+        self.startup_table.setColumnWidth(2, 250)
+        self.startup_table.setColumnWidth(3, 150)
+        self.startup_table.verticalHeader().setVisible(False)
+        self.startup_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+
+        layout.addWidget(self.startup_table)
+
+        # Status bar for launch progress
+        self.startup_status = QLabel("Configure apps that auto-launch when you start JARVIS with --startup")
+        self.startup_status.setStyleSheet(f"""
+            color: {COLORS['text_dim']};
+            padding: 8px;
+            font-size: 11px;
+            border: 1px solid {COLORS['border']};
+            border-radius: 5px;
+            background: {COLORS['bg_panel']};
+        """)
+        layout.addWidget(self.startup_status)
+
+        # Launch progress bar (hidden by default)
+        self.startup_progress = QProgressBar()
+        self.startup_progress.setStyleSheet(f"""
+            QProgressBar {{
+                background: {COLORS['bg_dark']};
+                border: 1px solid {COLORS['arc_blue_dim']};
+                border-radius: 5px;
+                text-align: center;
+                color: {COLORS['text']};
+                font-weight: bold;
+            }}
+            QProgressBar::chunk {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {COLORS['arc_blue_dim']}, stop:1 {COLORS['arc_blue']});
+                border-radius: 4px;
+            }}
+        """)
+        self.startup_progress.setVisible(False)
+        layout.addWidget(self.startup_progress)
+
+        self.refresh_startup_table()
+        return widget
+
+    def refresh_startup_table(self):
+        """Refresh the startup apps table"""
+        try:
+            from core.smart_features import get_startup_manager
+            apps = get_startup_manager().get_apps()
+        except Exception:
+            apps = []
+
+        self.startup_table.setRowCount(len(apps))
+        for row, app in enumerate(apps):
+            num_item = QTableWidgetItem(str(row + 1))
+            num_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.startup_table.setItem(row, 0, num_item)
+
+            name_item = QTableWidgetItem(app['name'])
+            name_item.setForeground(QColor(COLORS['arc_glow']))
+            self.startup_table.setItem(row, 1, name_item)
+
+            self.startup_table.setItem(row, 2, QTableWidgetItem(app['command']))
+
+            status_item = QTableWidgetItem("READY")
+            status_item.setForeground(QColor(COLORS['success']))
+            status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.startup_table.setItem(row, 3, status_item)
+
+    def startup_add_app(self):
+        """Add an app to the startup list via dropdown dialog"""
+        dialog = StartupAddDialog(self)
+        if dialog.exec():
+            name, command = dialog.get_selected_app()
+            if name:
+                try:
+                    from core.smart_features import get_startup_manager
+                    result = get_startup_manager().add_app(name, command)
+                    self.refresh_startup_table()
+                    self.startup_status.setText(result)
+                    self.startup_status.setStyleSheet(f"color: {COLORS['success']}; padding: 8px; font-size: 11px; border: 1px solid {COLORS['border']}; border-radius: 5px; background: {COLORS['bg_panel']};")
+                except Exception as e:
+                    self.startup_status.setText(f"Error: {e}")
+
+    def startup_remove_app(self):
+        """Remove selected app from startup list"""
+        row = self.startup_table.currentRow()
+        if row < 0:
+            self.startup_status.setText("Select an app from the table first.")
+            self.startup_status.setStyleSheet(f"color: {COLORS['warning']}; padding: 8px; font-size: 11px; border: 1px solid {COLORS['border']}; border-radius: 5px; background: {COLORS['bg_panel']};")
+            return
+
+        app_name = self.startup_table.item(row, 1).text()
+        try:
+            from core.smart_features import get_startup_manager
+            result = get_startup_manager().remove_app(app_name)
+            self.refresh_startup_table()
+            self.startup_status.setText(result)
+            self.startup_status.setStyleSheet(f"color: {COLORS['success']}; padding: 8px; font-size: 11px; border: 1px solid {COLORS['border']}; border-radius: 5px; background: {COLORS['bg_panel']};")
+        except Exception as e:
+            self.startup_status.setText(f"Error: {e}")
+
+    def startup_launch_all(self):
+        """Launch all startup apps with voice announcements"""
+        try:
+            from core.smart_features import get_startup_manager
+            apps = get_startup_manager().get_apps()
+        except Exception:
+            apps = []
+
+        if not apps:
+            self.startup_status.setText("No startup apps configured. Add some first!")
+            self.startup_status.setStyleSheet(f"color: {COLORS['warning']}; padding: 8px; font-size: 11px; border: 1px solid {COLORS['border']}; border-radius: 5px; background: {COLORS['bg_panel']};")
+            return
+
+        # Setup progress
+        self.startup_progress.setVisible(True)
+        self.startup_progress.setMaximum(len(apps))
+        self.startup_progress.setValue(0)
+        self.startup_status.setText("Launching startup applications...")
+        self.startup_status.setStyleSheet(f"color: {COLORS['arc_blue']}; padding: 8px; font-size: 11px; border: 1px solid {COLORS['border']}; border-radius: 5px; background: {COLORS['bg_panel']};")
+
+        # Reset table status
+        for row in range(self.startup_table.rowCount()):
+            status_item = QTableWidgetItem("WAITING")
+            status_item.setForeground(QColor(COLORS['text_dim']))
+            status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.startup_table.setItem(row, 3, status_item)
+
+        # Launch in background thread
+        self._startup_worker = StartupWorker(apps)
+        self._startup_worker.app_launching.connect(self._on_app_launching)
+        self._startup_worker.app_launched.connect(self._on_app_launched)
+        self._startup_worker.all_done.connect(self._on_startup_done)
+        self._startup_worker.start()
+
+    def _on_app_launching(self, name, current, total):
+        """Called when an app is about to launch"""
+        self.startup_progress.setValue(current - 1)
+        self.startup_status.setText(f"Opening {name}... ({current}/{total})")
+
+        # Update table status
+        row = current - 1
+        if row < self.startup_table.rowCount():
+            status_item = QTableWidgetItem("LAUNCHING...")
+            status_item.setForeground(QColor(COLORS['gold']))
+            status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.startup_table.setItem(row, 3, status_item)
+
+    def _on_app_launched(self, name, success, message):
+        """Called after an app launch attempt"""
+        # Find the row for this app
+        for row in range(self.startup_table.rowCount()):
+            item = self.startup_table.item(row, 1)
+            if item and item.text() == name:
+                if success:
+                    status_item = QTableWidgetItem("RUNNING")
+                    status_item.setForeground(QColor(COLORS['success']))
+                else:
+                    status_item = QTableWidgetItem("FAILED")
+                    status_item.setForeground(QColor(COLORS['red']))
+                status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.startup_table.setItem(row, 3, status_item)
+                break
+
+    def _on_startup_done(self, summary):
+        """Called when all startup apps are done"""
+        self.startup_progress.setValue(self.startup_progress.maximum())
+        self.startup_status.setText(summary)
+        self.startup_status.setStyleSheet(f"color: {COLORS['success']}; padding: 8px; font-size: 11px; border: 1px solid {COLORS['border']}; border-radius: 5px; background: {COLORS['bg_panel']};")
+        # Hide progress bar after a delay
+        QTimer.singleShot(5000, lambda: self.startup_progress.setVisible(False))
 
     def setup_tray(self):
         """Setup system tray"""

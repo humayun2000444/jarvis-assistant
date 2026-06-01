@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Google Chrome",
+    "command": "/usr/bin/google-chrome-stable"
+  },
+  {
+    "name": "IntelliJ IDEA",
+    "command": "/snap/bin/intellij-idea-ultimate"
+  }
+]

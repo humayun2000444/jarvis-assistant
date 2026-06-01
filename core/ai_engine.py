@@ -340,7 +340,7 @@ Remember to:
             from core.smart_features import (
                 get_screen, get_web_search, get_reminder_system, get_music,
                 get_file_manager, get_notes, get_system_controller, get_memory,
-                get_briefing, get_automation
+                get_briefing, get_automation, get_startup_manager
             )
 
             # ---- CLIPBOARD ----
@@ -521,6 +521,29 @@ Remember to:
                 name = msg.split('run workflow', 1)[-1].strip()
                 if name:
                     return get_automation().run_workflow(name)
+
+            # ---- STARTUP APPS ----
+            if any(p in msg for p in ['startup apps', 'startup list', 'my startup', 'show startup', 'list startup']):
+                return get_startup_manager().list_apps()
+
+            if any(p in msg for p in ['run startup', 'launch startup', 'start my apps', 'open my apps', 'run my apps']):
+                return get_startup_manager().run_startup()
+
+            if any(p in msg for p in ['add to startup', 'add startup']):
+                for prefix in ['add to startup', 'add startup']:
+                    if prefix in msg:
+                        app = msg.split(prefix, 1)[-1].strip()
+                        if app:
+                            return get_startup_manager().add_app(app)
+                return "Which app should I add to startup?"
+
+            if any(p in msg for p in ['remove from startup', 'remove startup']):
+                for prefix in ['remove from startup', 'remove startup']:
+                    if prefix in msg:
+                        app = msg.split(prefix, 1)[-1].strip()
+                        if app:
+                            return get_startup_manager().remove_app(app)
+                return "Which app should I remove from startup?"
 
         except ImportError as e:
             logger.error(f"Smart features import error: {e}")

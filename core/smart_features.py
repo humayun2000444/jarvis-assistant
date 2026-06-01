@@ -11,6 +11,7 @@ JARVIS Smart Features Module
 - Persistent Memory
 - Daily Briefing
 - Automation Workflows
+- Startup Apps Manager
 """
 import os
 import sys
@@ -1127,6 +1128,232 @@ class AutomationEngine:
             self._save_workflows()
 
 
+class StartupManager:
+    """Manages startup applications that auto-launch when JARVIS starts"""
+
+    def __init__(self):
+        self._apps: List[Dict[str, str]] = []
+        self._load_apps()
+
+    def _get_config_file(self) -> Path:
+        from config.settings import DATA_DIR
+        return DATA_DIR / "startup_apps.json"
+
+    def _load_apps(self):
+        path = self._get_config_file()
+        if path.exists():
+            try:
+                with open(path, 'r') as f:
+                    self._apps = json.load(f)
+            except Exception:
+                self._apps = []
+
+    def _save_apps(self):
+        path = self._get_config_file()
+        try:
+            with open(path, 'w') as f:
+                json.dump(self._apps, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save startup apps: {e}")
+
+    def add_app(self, name: str, command: str = "") -> str:
+        """Add an app to the startup list"""
+        name_lower = name.lower().strip()
+        # Check for duplicates
+        for app in self._apps:
+            if app['name'].lower() == name_lower:
+                return f"'{name}' is already in the startup list."
+
+        # Auto-resolve command if not provided
+        if not command:
+            command = self._resolve_command(name_lower)
+
+        self._apps.append({'name': name, 'command': command})
+        self._save_apps()
+        return f"Added '{name}' to startup apps."
+
+    def remove_app(self, name: str) -> str:
+        """Remove an app from the startup list"""
+        name_lower = name.lower().strip()
+        for i, app in enumerate(self._apps):
+            if app['name'].lower() == name_lower:
+                self._apps.pop(i)
+                self._save_apps()
+                return f"Removed '{name}' from startup apps."
+        return f"'{name}' is not in the startup list."
+
+    def list_apps(self) -> str:
+        """List all startup apps"""
+        if not self._apps:
+            return "No startup apps configured.\nAdd apps with: /startup-add <app name>"
+        result = "Startup Applications:\n"
+        for i, app in enumerate(self._apps, 1):
+            result += f"  {i}. {app['name']} ({app['command']})\n"
+        return result
+
+    def get_apps(self) -> List[Dict[str, str]]:
+        """Get the raw list of startup apps"""
+        return list(self._apps)
+
+    def discover_installed_apps(self) -> List[Dict[str, str]]:
+        """Scan .desktop files to find installed GUI applications"""
+        import glob as glob_mod
+
+        search_dirs = [
+            os.path.expanduser("~/.local/share/applications"),
+            "/usr/share/applications",
+            "/usr/local/share/applications",
+            "/var/lib/snapd/desktop/applications",
+            "/var/lib/flatpak/exports/share/applications",
+        ]
+
+        apps = []
+        seen_names = set()
+
+        for search_dir in search_dirs:
+            if not os.path.isdir(search_dir):
+                continue
+            for desktop_file in glob_mod.glob(os.path.join(search_dir, "*.desktop")):
+                try:
+                    name = ""
+                    exec_cmd = ""
+                    no_display = False
+                    app_type = ""
+                    with open(desktop_file, 'r', errors='ignore') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith("Name=") and not name:
+                                name = line[5:]
+                            elif line.startswith("Exec="):
+                                # Take the binary, strip field codes like %U %F
+                                exec_cmd = line[5:].split()[0] if line[5:].strip() else ""
+                            elif line.startswith("NoDisplay=true"):
+                                no_display = True
+                            elif line.startswith("Type="):
+                                app_type = line[5:]
+
+                    if name and exec_cmd and not no_display and app_type == "Application":
+                        name_lower = name.lower()
+                        if name_lower not in seen_names:
+                            seen_names.add(name_lower)
+                            apps.append({'name': name, 'command': exec_cmd})
+                except Exception:
+                    continue
+
+        apps.sort(key=lambda a: a['name'].lower())
+        return apps
+
+    def _resolve_command(self, app_name: str) -> str:
+        """Resolve an app name to a system command"""
+        known_apps = {
+            'chrome': 'google-chrome-stable',
+            'google chrome': 'google-chrome-stable',
+            'firefox': 'firefox',
+            'vs code': 'code',
+            'vscode': 'code',
+            'visual studio code': 'code',
+            'terminal': 'gnome-terminal',
+            'files': 'nautilus',
+            'file manager': 'nautilus',
+            'calculator': 'gnome-calculator',
+            'spotify': 'spotify',
+            'discord': 'discord',
+            'slack': 'slack',
+            'telegram': 'telegram-desktop',
+            'thunderbird': 'thunderbird',
+            'libreoffice': 'libreoffice',
+            'gimp': 'gimp',
+            'obs': 'obs',
+            'vlc': 'vlc',
+            'postman': 'postman',
+            'steam': 'steam',
+            'settings': 'gnome-control-center',
+            'system monitor': 'gnome-system-monitor',
+            'text editor': 'gedit',
+            'notepad': 'gedit',
+        }
+        if app_name in known_apps:
+            return known_apps[app_name]
+        # Try the name directly as command
+        return app_name.replace(' ', '-')
+
+    def run_startup(self, speak_func=None) -> str:
+        """Launch all startup apps with voice announcements"""
+        if not self._apps:
+            msg = "No startup apps configured."
+            if speak_func:
+                speak_func(msg)
+            return msg
+
+        results = []
+        total = len(self._apps)
+
+        # Opening announcement
+        intro = f"Good day! Starting your {total} startup application{'s' if total > 1 else ''}."
+        if speak_func:
+            speak_func(intro)
+            time.sleep(0.5)
+
+        for i, app in enumerate(self._apps, 1):
+            name = app['name']
+            command = app['command']
+
+            # Announce the app
+            announce = f"Opening {name}. Application {i} of {total}."
+            if speak_func:
+                speak_func(announce)
+
+            # Try to launch it
+            success, msg = self._launch_app(command, name)
+            if success:
+                results.append(f"[OK] {name} — launched successfully")
+            else:
+                results.append(f"[FAIL] {name} — {msg}")
+                if speak_func:
+                    speak_func(f"Sorry, I couldn't open {name}.")
+
+            # Small delay between launches so system isn't overwhelmed
+            time.sleep(1.5)
+
+        # Summary announcement
+        ok_count = sum(1 for r in results if r.startswith("[OK]"))
+        fail_count = total - ok_count
+
+        if fail_count == 0:
+            summary = f"All {total} applications are now running. You're all set!"
+        else:
+            summary = f"Launched {ok_count} of {total} applications. {fail_count} failed to start."
+
+        if speak_func:
+            speak_func(summary)
+
+        return "Startup complete:\n" + "\n".join(f"  {r}" for r in results)
+
+    def _launch_app(self, command: str, name: str) -> tuple:
+        """Launch a single application. Returns (success, message)."""
+        # Try direct command first
+        binary_path = shutil.which(command)
+        if binary_path:
+            try:
+                subprocess.Popen(
+                    [binary_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
+                return True, f"Launched {name}"
+            except Exception as e:
+                return False, str(e)
+
+        # Fallback: try the QuickCommands launcher
+        try:
+            from core.features import QuickCommands
+            success, msg = QuickCommands.launch_arbitrary_app(f"open {name}")
+            return success, msg
+        except Exception as e:
+            return False, str(e)
+
+
 # ============================================================
 # SINGLETON INSTANCES
 # ============================================================
@@ -1141,6 +1368,7 @@ _system = None
 _memory = None
 _briefing = None
 _automation = None
+_startup = None
 
 
 def get_screen() -> ScreenAwareness:
@@ -1203,3 +1431,9 @@ def get_automation() -> AutomationEngine:
         _automation = AutomationEngine()
         _automation.install_defaults()
     return _automation
+
+def get_startup_manager() -> StartupManager:
+    global _startup
+    if _startup is None:
+        _startup = StartupManager()
+    return _startup

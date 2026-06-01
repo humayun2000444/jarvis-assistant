@@ -24,6 +24,7 @@ Say **"Hey Jarvis"** and start talking — it listens, responds, launches apps, 
 - **Persistent Memory** - "Remember that my birthday is March 5" / "What's my birthday?" — remembers facts forever
 - **System Control** - "System info", "Kill Chrome", "Battery status", "Brightness 50"
 - **Daily Briefing** - "Brief me" — weather + tasks + reminders + system status + quote
+- **Startup Apps** - Auto-launch your favorite apps on boot with voice announcements
 - **Automation Workflows** - "Goodnight" (locks + mutes), "Work mode" (opens Chrome + VS Code + Terminal)
 
 ### Productivity
@@ -120,6 +121,7 @@ jarvis --model mistral --gui   # Use a different model
 
 ### Quick Commands
 ```bash
+jarvis --startup     # Launch all startup apps with voice
 jarvis --welcome     # Show welcome message
 jarvis --summary     # Show daily summary
 jarvis --health      # Check system health
@@ -163,6 +165,10 @@ Say **"Hey Jarvis"** to wake up, then speak naturally:
 | **Workflows** | "Goodnight" | Mutes + locks screen |
 | **Workflows** | "Work mode" | Opens Chrome + VS Code + Terminal |
 | **Workflows** | "Break time" | Break notification |
+| **Startup** | "Show startup apps" | Lists startup apps |
+| **Startup** | "Run startup apps" | Launches all startup apps |
+| **Startup** | "Add Chrome to startup" | Adds app to startup |
+| **Startup** | "Remove Chrome from startup" | Removes from startup |
 | **Weather** | "What's the weather?" | Current weather |
 | **Tasks** | "Show my tasks" | Lists pending tasks |
 | **Convo** | "Goodbye" | Ends conversation mode |
@@ -191,6 +197,10 @@ Say **"Hey Jarvis"** to wake up, then speak naturally:
 /remember <fact>    # Store a memory
 /recall <query>     # Recall a memory
 /workflows          # List workflows
+/startup            # List startup apps
+/startup-add <app>  # Add app to startup list
+/startup-remove <app> # Remove app from startup
+/startup-run        # Launch all startup apps
 
 # Reports
 /summary            # Daily summary
@@ -249,6 +259,7 @@ jarvis/
     ├── jarvis.db           # SQLite database
     ├── reminders.json      # Persistent reminders
     ├── workflows.json      # Custom workflows
+    ├── startup_apps.json   # Startup app list
     └── user_config.yaml    # User config
 ```
 

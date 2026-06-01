@@ -402,7 +402,7 @@ class JarvisScheduler:
 
     @safe_job
     def morning_welcome(self):
-        """Morning welcome routine"""
+        """Morning welcome routine with startup apps"""
         logger.info("Running morning welcome")
 
         welcome = self.ai.generate_welcome_message()
@@ -413,6 +413,16 @@ class JarvisScheduler:
             speak=True,
             category="welcome"
         )
+
+        # Launch startup apps if configured
+        try:
+            from core.smart_features import get_startup_manager
+            startup = get_startup_manager()
+            if startup.get_apps():
+                logger.info("Launching startup apps")
+                startup.run_startup(speak_func=lambda text: self._tts.speak(text, block=True))
+        except Exception as e:
+            logger.error(f"Startup apps error: {e}")
 
     @safe_job
     def end_of_day_summary(self):

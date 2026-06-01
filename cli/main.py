@@ -128,6 +128,14 @@ def handle_command(cmd: str):
         cli_workflows()
     elif command == 'music':
         cli_music(args)
+    elif command == 'startup':
+        cli_startup()
+    elif command in ('startup-add', 'startup_add'):
+        cli_startup_add(args)
+    elif command in ('startup-remove', 'startup_remove'):
+        cli_startup_remove(args)
+    elif command in ('startup-run', 'startup_run'):
+        cli_startup_run()
     else:
         # Check plugin commands
         try:
@@ -170,6 +178,10 @@ def show_help():
 | /remember [fact] | Store a memory |
 | /recall [query] | Recall a memory |
 | /workflows | List automation workflows |
+| /startup | List startup apps |
+| /startup-add [app] | Add app to startup list |
+| /startup-remove [app] | Remove app from startup list |
+| /startup-run | Launch all startup apps now |
 | /help | Show this help |
 | exit | Exit the assistant |
 
@@ -483,7 +495,53 @@ def cli_music(args: str):
         console.print(f"[red]Error: {e}[/red]")
 
 
-def show_weather(location: str = ""):
+def cli_startup():
+    try:
+        from core.smart_features import get_startup_manager
+        console.print(Panel(get_startup_manager().list_apps(), title="Startup Apps", border_style="cyan"))
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+def cli_startup_add(args: str):
+    if not args:
+        args = Prompt.ask("App name to add")
+    try:
+        from core.smart_features import get_startup_manager
+        result = get_startup_manager().add_app(args)
+        console.print(f"[green]{result}[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+def cli_startup_remove(args: str):
+    if not args:
+        args = Prompt.ask("App name to remove")
+    try:
+        from core.smart_features import get_startup_manager
+        result = get_startup_manager().remove_app(args)
+        console.print(f"[green]{result}[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+def cli_startup_run():
+    try:
+        from core.smart_features import get_startup_manager
+        from core.features import VoiceEngine
+
+        startup = get_startup_manager()
+        voice = VoiceEngine()
+
+        def speak_and_print(text):
+            console.print(f"  [cyan]JARVIS:[/cyan] {text}")
+            voice.speak(text, block=True)
+
+        console.print(Panel("Launching startup apps...", title="Startup", border_style="green"))
+        result = startup.run_startup(speak_func=speak_and_print)
+        console.print(Panel(result, title="Startup Complete", border_style="cyan"))
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+
     """Show weather information"""
     try:
         from core.weather import get_weather

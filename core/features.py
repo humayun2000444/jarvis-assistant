@@ -888,7 +888,8 @@ class ScreenTimeTracker:
 
 
 class AppUsageTracker:
-    """Track which applications the user is actively using via active window polling"""
+    """Track which applications the user is actively using via active window polling.
+    Supports both Wayland (AT-SPI2) and X11 (xdotool)."""
 
     def __init__(self):
         self._running = False
@@ -899,20 +900,35 @@ class AppUsageTracker:
         self._session_start = None
         self._lock = threading.Lock()
         self._poll_interval = 5  # seconds
+        self._detection_method = self._detect_method()
 
-        # Check if xdotool is available
-        self._xdotool_available = self._check_xdotool()
+    def _detect_method(self) -> str:
+        """Determine the best method for active window detection"""
+        # Check if running on Wayland — use AT-SPI2
+        session_type = os.environ.get('XDG_SESSION_TYPE', '').lower()
+        wayland_display = os.environ.get('WAYLAND_DISPLAY', '')
+        if session_type == 'wayland' or wayland_display:
+            try:
+                import gi
+                gi.require_version('Atspi', '2.0')
+                from gi.repository import Atspi
+                Atspi.init()
+                return 'atspi'
+            except Exception:
+                pass
 
-    def _check_xdotool(self) -> bool:
+        # Fallback to xdotool (X11)
         try:
             subprocess.run(['xdotool', '--version'], capture_output=True, timeout=3)
-            return True
+            return 'xdotool'
         except Exception:
-            return False
+            pass
+
+        return 'none'
 
     def start(self):
         """Start tracking in background"""
-        if self._running or not self._xdotool_available:
+        if self._running or self._detection_method == 'none':
             return
         self._running = True
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
@@ -930,7 +946,7 @@ class AppUsageTracker:
         while self._running:
             try:
                 app_name, window_title = self._get_active_window()
-                if app_name:
+                if app_name and app_name.strip():
                     with self._lock:
                         if app_name != self._current_app:
                             # App switched — finalize old session, start new one
@@ -966,8 +982,43 @@ class AppUsageTracker:
 
     def _get_active_window(self) -> tuple:
         """Get the currently active window's app name and title"""
+        if self._detection_method == 'atspi':
+            return self._get_active_window_atspi()
+        elif self._detection_method == 'xdotool':
+            return self._get_active_window_xdotool()
+        return None, None
+
+    def _get_active_window_atspi(self) -> tuple:
+        """Detect focused window via AT-SPI2 accessibility (works on Wayland + X11)"""
         try:
-            # Get active window ID
+            import gi
+            gi.require_version('Atspi', '2.0')
+            from gi.repository import Atspi
+
+            desktop = Atspi.get_desktop(0)
+            for i in range(desktop.get_child_count()):
+                app = desktop.get_child_at_index(i)
+                if not app:
+                    continue
+                app_name = app.get_name() or ""
+                for j in range(app.get_child_count()):
+                    try:
+                        win = app.get_child_at_index(j)
+                        if win:
+                            states = win.get_state_set()
+                            if states and states.contains(Atspi.StateType.ACTIVE):
+                                title = win.get_name() or ""
+                                cleaned = self._clean_app_name(app_name)
+                                return cleaned, title
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return None, None
+
+    def _get_active_window_xdotool(self) -> tuple:
+        """Detect focused window via xdotool (X11 only)"""
+        try:
             result = subprocess.run(
                 ['xdotool', 'getactivewindow'],
                 capture_output=True, text=True, timeout=3
@@ -977,70 +1028,93 @@ class AppUsageTracker:
 
             window_id = result.stdout.strip()
 
-            # Get window name
             result = subprocess.run(
                 ['xdotool', 'getactivewindow', 'getwindowname'],
                 capture_output=True, text=True, timeout=3
             )
             window_title = result.stdout.strip() if result.returncode == 0 else ""
 
-            # Get WM_CLASS (app identifier)
             result = subprocess.run(
                 ['xprop', '-id', window_id, 'WM_CLASS'],
                 capture_output=True, text=True, timeout=3
             )
             if result.returncode == 0 and '=' in result.stdout:
-                # WM_CLASS format: WM_CLASS(STRING) = "instance", "Class"
                 parts = result.stdout.split('=', 1)[1].strip()
                 classes = [c.strip().strip('"') for c in parts.split(',')]
                 app_name = classes[-1] if classes else "Unknown"
             else:
-                # Fallback: derive app name from window title
                 app_name = window_title.split(' - ')[-1].strip() if window_title else "Unknown"
 
-            # Clean up common app names
             app_name = self._clean_app_name(app_name)
             return app_name, window_title
-
         except Exception:
             return None, None
 
     def _clean_app_name(self, name: str) -> str:
         """Normalize app names for consistent tracking"""
+        # Skip system/background processes
+        skip = {'gnome-shell', 'gsd-color', 'gsd-keyboard', 'gsd-wacom',
+                'gsd-media-keys', 'gsd-power', 'gsd-xsettings', 'ibus-x11',
+                'ibus-extension-gtk3', 'evolution-alarm-notify', 'gjs',
+                'xdg-desktop-portal-gtk', 'update-notifier', 'mutter-x11-frames',
+                'xdg-desktop-portal-gnome'}
+        if name.lower() in skip or name == 'python':
+            return ""
+
         name_map = {
-            'Google-chrome': 'Chrome',
-            'google-chrome': 'Chrome',
-            'Google-chrome-stable': 'Chrome',
-            'firefox': 'Firefox',
-            'Firefox': 'Firefox',
-            'Navigator': 'Firefox',
-            'Code': 'VS Code',
-            'code': 'VS Code',
-            'Gnome-terminal': 'Terminal',
-            'gnome-terminal': 'Terminal',
-            'org.gnome.Terminal': 'Terminal',
-            'Nautilus': 'Files',
-            'org.gnome.Nautilus': 'Files',
-            'Spotify': 'Spotify',
-            'spotify': 'Spotify',
-            'discord': 'Discord',
-            'Discord': 'Discord',
-            'Slack': 'Slack',
-            'slack': 'Slack',
-            'Telegram': 'Telegram',
-            'telegram-desktop': 'Telegram',
+            # Chrome
+            'Google-chrome': 'Chrome', 'google-chrome': 'Chrome',
+            'Google-chrome-stable': 'Chrome', 'Google Chrome': 'Chrome',
+            # Firefox
+            'firefox': 'Firefox', 'Firefox': 'Firefox', 'Navigator': 'Firefox',
+            # VS Code
+            'Code': 'VS Code', 'code': 'VS Code',
+            # Terminal
+            'Gnome-terminal': 'Terminal', 'gnome-terminal': 'Terminal',
+            'org.gnome.Terminal': 'Terminal', 'gnome-terminal-server': 'Terminal',
+            # Files
+            'Nautilus': 'Files', 'org.gnome.Nautilus': 'Files',
+            # IntelliJ / JetBrains
+            'jetbrains-idea': 'IntelliJ IDEA', 'jetbrains-idea-ce': 'IntelliJ IDEA',
+            'jetbrains-pycharm': 'PyCharm', 'jetbrains-pycharm-ce': 'PyCharm',
+            'jetbrains-webstorm': 'WebStorm', 'jetbrains-clion': 'CLion',
+            'jetbrains-goland': 'GoLand', 'jetbrains-rider': 'Rider',
+            'jetbrains-studio': 'Android Studio',
+            'java': 'IntelliJ IDEA',  # JetBrains runs as java process
+            # Common apps
+            'Spotify': 'Spotify', 'spotify': 'Spotify',
+            'discord': 'Discord', 'Discord': 'Discord',
+            'Slack': 'Slack', 'slack': 'Slack',
+            'Telegram': 'Telegram', 'telegram-desktop': 'Telegram',
             'Thunderbird': 'Thunderbird',
-            'Gedit': 'Text Editor',
-            'org.gnome.gedit': 'Text Editor',
-            'Evince': 'Document Viewer',
-            'Eog': 'Image Viewer',
-            'Totem': 'Videos',
-            'vlc': 'VLC',
-            'obs': 'OBS',
-            'Gimp-2.10': 'GIMP',
+            'Gedit': 'Text Editor', 'org.gnome.gedit': 'Text Editor',
+            'Evince': 'Document Viewer', 'Eog': 'Image Viewer',
+            'Totem': 'Videos', 'vlc': 'VLC', 'obs': 'OBS',
+            'Gimp-2.10': 'GIMP', 'gimp': 'GIMP',
             'libreoffice': 'LibreOffice',
+            'mysql-workbench-bin': 'MySQL Workbench',
+            'Postman': 'Postman', 'postman': 'Postman',
         }
-        return name_map.get(name, name)
+
+        # Direct match
+        if name in name_map:
+            return name_map[name]
+
+        # Case-insensitive match
+        name_lower = name.lower()
+        for key, val in name_map.items():
+            if key.lower() == name_lower:
+                return val
+
+        # JetBrains detection from AT-SPI2 names (often show as process name)
+        if 'jetbrains' in name_lower or 'idea' in name_lower:
+            return 'IntelliJ IDEA'
+        if 'pycharm' in name_lower:
+            return 'PyCharm'
+        if 'android-studio' in name_lower or 'studio' in name_lower:
+            return 'Android Studio'
+
+        return name
 
     def get_current_app(self) -> Optional[str]:
         """Get the app currently being tracked"""

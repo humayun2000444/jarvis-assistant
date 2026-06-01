@@ -1,6 +1,6 @@
 # JARVIS - Personal AI Assistant
 
-A robust, Iron Man-inspired personal AI assistant with wake word activation, two-way voice conversation, and 30+ smart features. Built with Python, Ollama, and PyQt6.
+A robust, Iron Man-inspired personal AI assistant with wake word activation, two-way voice conversation, and 35+ smart features. Built with Python, Ollama, and PyQt6.
 
 Say **"Hey Jarvis"** and start talking — it listens, responds, launches apps, searches the web, sets reminders, controls music, manages files, takes notes, and much more.
 
@@ -24,7 +24,7 @@ Say **"Hey Jarvis"** and start talking — it listens, responds, launches apps, 
 - **Persistent Memory** - "Remember that my birthday is March 5" / "What's my birthday?" — remembers facts forever
 - **System Control** - "System info", "Kill Chrome", "Battery status", "Brightness 50"
 - **Daily Briefing** - "Brief me" — weather + tasks + reminders + system status + quote
-- **App Usage Tracking** - Tracks which apps you use, how long, daily stats and rankings
+- **App Usage Tracking** - Tracks active window every 5s, shows daily usage bars, time per app, top apps ranking
 - **Startup Apps** - Auto-launch your favorite apps on boot with voice announcements
 - **Automation Workflows** - "Goodnight" (locks + mutes), "Work mode" (opens Chrome + VS Code + Terminal)
 
@@ -37,8 +37,8 @@ Say **"Hey Jarvis"** and start talking — it listens, responds, launches apps, 
 - **Health Reminders** - Water, posture, eye strain, and stretch reminders
 
 ### Interface
-- **Iron Man GUI** - Animated Arc Reactor, dark HUD theme, system monitoring panels
-- **CLI Mode** - Rich interactive terminal with 20+ slash commands
+- **Iron Man GUI** - Animated Arc Reactor, dark HUD theme, 6 tabs (Chat, Tasks, Log, Analysis, Startup, App Usage)
+- **CLI Mode** - Rich interactive terminal with 25+ slash commands
 - **Background Daemon** - Scheduled tasks, reminders, and notifications
 - **Plugin System** - Extend JARVIS with custom plugins
 - **YAML Config** - User-customizable settings
@@ -46,12 +46,15 @@ Say **"Hey Jarvis"** and start talking — it listens, responds, launches apps, 
 ## Screenshots
 
 The GUI features an Iron Man-inspired interface with:
-- Animated Arc Reactor
+- Animated Arc Reactor with power level indicator
 - Dark HUD theme with cyan/blue glow
-- System monitoring panels
+- System monitoring panels (CPU, RAM, disk)
+- 6 Tabs: Neural Link (Chat), Missions (Tasks), Log, Analysis, Startup Apps, App Usage
 - Command palette (Ctrl+K)
 - Voice conversation mode (Ctrl+J)
 - Wake word status indicator
+- App usage tracking with color-coded bars and daily stats
+- Startup apps manager with installed app dropdown
 
 ## Installation
 
@@ -92,8 +95,8 @@ sudo apt install xclip
 # Music control
 sudo apt install playerctl
 
-# Window detection
-sudo apt install xdotool
+# Window detection & app usage tracking
+sudo apt install xdotool xprop
 ```
 
 ## Usage
@@ -244,9 +247,9 @@ jarvis/
 │   └── settings.py         # Config with YAML override
 ├── core/
 │   ├── ai_engine.py        # Ollama AI + smart feature routing
-│   ├── smart_features.py   # 10 smart feature modules
-│   ├── database.py         # SQLite with connection pooling
-│   ├── features.py         # System monitor, TTS, Pomodoro, App launcher
+│   ├── smart_features.py   # 12 smart feature modules
+│   ├── database.py         # SQLite with connection pooling + app usage
+│   ├── features.py         # System monitor, TTS, Pomodoro, App launcher, Usage tracker
 │   ├── voice_assistant.py  # Voice conversation + wake word
 │   ├── weather.py          # Weather service
 │   ├── scheduler.py        # Background task scheduler
@@ -309,6 +312,7 @@ pytest tests/ -v    # Run all 44 tests
 - **DuckDuckGo** - Web search (no API key needed)
 - **Tesseract** - OCR for screen reading
 - **playerctl** - Media playback control
+- **xdotool** - Active window detection for app usage tracking
 
 ## License
 
